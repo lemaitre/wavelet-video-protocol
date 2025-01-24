@@ -1,8 +1,4 @@
-use std::{
-    iter::FusedIterator,
-    marker::PhantomData,
-    ops::{Deref, DerefMut},
-};
+use std::{iter::FusedIterator, marker::PhantomData};
 
 use super::{ptr_mut_offset, ptr_offset};
 
@@ -209,8 +205,50 @@ impl<'a, T> StridedSliceMut<'a, T> {
         }
     }
 
+    pub fn len(&self) -> usize {
+        self.len
+    }
+    pub fn stride(&self) -> isize {
+        self.stride
+    }
+    pub fn as_ptr(&self) -> *const T {
+        self.ptr
+    }
     pub fn as_ptr_mut(&mut self) -> *mut T {
         self.ptr
+    }
+    pub fn as_ref(&mut self) -> StridedSlice<'_, T> {
+        StridedSlice {
+            ptr: self.ptr,
+            stride: self.stride,
+            len: self.len,
+            _marker: PhantomData,
+        }
+    }
+
+    pub unsafe fn unchecked_get(&self, i: usize) -> &T {
+        unsafe {
+            ptr_offset(self.ptr, i, self.stride)
+                .as_ref()
+                .unwrap_unchecked()
+        }
+    }
+    pub fn checked_get(&self, i: usize) -> Option<&T> {
+        if i < self.len {
+            Some(unsafe { self.unchecked_get(i) })
+        } else {
+            None
+        }
+    }
+    pub fn get(&self, i: usize) -> &T {
+        if i < self.len {
+            unsafe { self.unchecked_get(i) }
+        } else {
+            panic!(
+                "Trying to access element #{} from a slice with {} elements",
+                i, self.len
+            )
+        }
     }
 
     pub unsafe fn unchecked_mut(&mut self, i: usize) -> &mut T {
@@ -236,30 +274,6 @@ impl<'a, T> StridedSliceMut<'a, T> {
                 i, self.len
             )
         }
-    }
-}
-
-impl<'a, T> Deref for StridedSliceMut<'a, T> {
-    type Target = StridedSlice<'a, T>;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { std::mem::transmute(self) }
-    }
-}
-impl<'a, T> DerefMut for StridedSliceMut<'a, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { std::mem::transmute(self) }
-    }
-}
-
-impl<'a, T> AsRef<StridedSlice<'a, T>> for StridedSliceMut<'a, T> {
-    fn as_ref(&self) -> &StridedSlice<'a, T> {
-        self.deref()
-    }
-}
-impl<'a, T> AsMut<StridedSlice<'a, T>> for StridedSliceMut<'a, T> {
-    fn as_mut(&mut self) -> &mut StridedSlice<'a, T> {
-        self.deref_mut()
     }
 }
 
