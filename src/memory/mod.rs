@@ -1,7 +1,7 @@
 mod image;
 mod slice;
 
-pub use image::ImageViewMut;
+pub use image::{Image, ImageView, ImageViewMut};
 pub use slice::{StridedSlice, StridedSliceMut};
 
 unsafe fn ptr_offset<T>(ptr: *const T, i: usize, stride: isize) -> *const T {
