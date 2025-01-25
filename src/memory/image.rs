@@ -1,11 +1,14 @@
-use std::{alloc::Layout, marker::PhantomData};
+use std::{alloc::Layout, marker::PhantomData, ptr::NonNull};
 
-use super::{ptr_mut_offset, ptr_offset, StridedSlice, StridedSliceMut};
+use super::{
+    ptr_offset, slice::SlicePtr, ImageColIter, ImageColIterMut, ImageColIterPtr, ImageRowIter,
+    ImageRowIterMut, ImageRowIterPtr, StridedSlice, StridedSliceMut,
+};
 
 #[derive(Copy)]
 #[repr(C)]
 pub struct ImageView<'a, T> {
-    ptr: *const T,
+    ptr: NonNull<T>,
     stride: usize,
     width: usize,
     height: usize,
@@ -24,6 +27,9 @@ impl<'a, T> ImageView<'a, T> {
     }
     pub fn stride(&self) -> usize {
         self.stride
+    }
+    pub fn ptr(&self) -> NonNull<T> {
+        self.ptr
     }
 
     pub unsafe fn unchecked_get(&self, x: usize, y: usize) -> &T {
@@ -53,7 +59,7 @@ impl<'a, T> ImageView<'a, T> {
     pub unsafe fn unchecked_row(&self, y: usize) -> &[T] {
         unsafe {
             std::slice::from_raw_parts(
-                ptr_offset(self.ptr, y, self.stride() as isize),
+                ptr_offset(self.ptr(), y, self.stride() as isize).as_ptr(),
                 self.width(),
             )
         }
@@ -79,7 +85,7 @@ impl<'a, T> ImageView<'a, T> {
     pub unsafe fn unchecked_col(&self, x: usize) -> StridedSlice<'_, T> {
         unsafe {
             StridedSlice::from_raw_parts(
-                ptr_offset(self.ptr, x, std::mem::size_of::<T>() as isize),
+                ptr_offset(self.ptr(), x, std::mem::size_of::<T>() as isize).as_ptr(),
                 self.stride() as isize,
                 self.height(),
             )
@@ -103,14 +109,25 @@ impl<'a, T> ImageView<'a, T> {
         }
     }
 
+    pub fn into_rows(self) -> ImageRowIter<'a, T> {
+        ImageRowIter(ImageRowIterPtr(self), PhantomData)
+    }
+    pub fn into_cols(self) -> ImageColIter<'a, T> {
+        ImageColIter(ImageColIterPtr(self), PhantomData)
+    }
+    pub fn rows(&self) -> ImageRowIter<'_, T> {
+        self.view().into_rows()
+    }
+    pub fn cols(&self) -> ImageColIter<'_, T> {
+        self.view().into_cols()
+    }
+
     pub fn for_each(&self, mut f: impl FnMut(usize, usize, &T)) {
-        for_each_ptr(
-            self.ptr,
-            self.width(),
-            self.height(),
-            self.stride(),
-            move |x, y, ptr| f(x, y, unsafe { ptr.as_ref().unwrap_unchecked() }),
-        );
+        for (y, row) in self.rows().enumerate() {
+            for (x, cell) in row.iter().enumerate() {
+                f(x, y, cell)
+            }
+        }
     }
 
     pub fn view(&self) -> ImageView<'_, T> {
@@ -123,7 +140,7 @@ impl<'a, T> ImageView<'a, T> {
         let height = height.min(self.height().checked_sub(y).unwrap_or(0));
 
         unsafe {
-            let ptr = self.ptr;
+            let ptr = self.ptr();
             let ptr = ptr_offset(ptr, y, self.stride() as isize);
             let ptr = ptr_offset(ptr, x, std::mem::size_of::<T>() as isize);
 
@@ -141,13 +158,27 @@ impl<'a, T> ImageView<'a, T> {
     }
 }
 
-impl<'a, T> Clone for ImageView<'a, T> {
+unsafe impl<'a, T: Sync> Send for ImageView<'a, T> {}
+unsafe impl<'a, T: Sync> Sync for ImageView<'a, T> {}
+
+impl<T> Default for ImageView<'_, T> {
+    fn default() -> Self {
+        Self {
+            ptr: NonNull::dangling(),
+            stride: Default::default(),
+            width: Default::default(),
+            height: Default::default(),
+            _marker: Default::default(),
+        }
+    }
+}
+impl<T> Clone for ImageView<'_, T> {
     fn clone(&self) -> Self {
         Self {
-            ptr: self.ptr,
-            stride: self.stride,
-            width: self.width,
-            height: self.height,
+            ptr: self.ptr(),
+            stride: self.stride(),
+            width: self.width(),
+            height: self.height(),
             _marker: PhantomData,
         }
     }
@@ -156,10 +187,10 @@ impl<'a, T> Clone for ImageView<'a, T> {
 impl<'a, T> From<ImageViewMut<'a, T>> for ImageView<'a, T> {
     fn from(value: ImageViewMut<'a, T>) -> Self {
         Self {
-            ptr: value.ptr,
-            stride: value.stride,
-            width: value.width,
-            height: value.height,
+            ptr: value.ptr(),
+            stride: value.stride(),
+            width: value.width(),
+            height: value.height(),
             _marker: PhantomData,
         }
     }
@@ -167,7 +198,7 @@ impl<'a, T> From<ImageViewMut<'a, T>> for ImageView<'a, T> {
 
 #[repr(C)]
 pub struct ImageViewMut<'a, T> {
-    ptr: *mut T,
+    ptr: NonNull<T>,
     stride: usize,
     width: usize,
     height: usize,
@@ -176,9 +207,6 @@ pub struct ImageViewMut<'a, T> {
 
 impl<'a, T> ImageViewMut<'a, T> {
     unsafe fn cast_as_const(&self) -> &ImageView<'a, T> {
-        unsafe { std::mem::transmute(self) }
-    }
-    unsafe fn cast_into_const(self) -> ImageView<'a, T> {
         unsafe { std::mem::transmute(self) }
     }
 
@@ -193,6 +221,9 @@ impl<'a, T> ImageViewMut<'a, T> {
     }
     pub fn stride(&self) -> usize {
         self.stride
+    }
+    pub fn ptr(&self) -> NonNull<T> {
+        self.ptr
     }
 
     pub unsafe fn unchecked_get(&self, x: usize, y: usize) -> &T {
@@ -242,7 +273,7 @@ impl<'a, T> ImageViewMut<'a, T> {
     pub unsafe fn unchecked_row_mut(&mut self, y: usize) -> &mut [T] {
         unsafe {
             std::slice::from_raw_parts_mut(
-                ptr_mut_offset(self.ptr, y, self.stride() as isize),
+                ptr_offset(self.ptr(), y, self.stride() as isize).as_ptr(),
                 self.width(),
             )
         }
@@ -278,7 +309,7 @@ impl<'a, T> ImageViewMut<'a, T> {
     pub unsafe fn unchecked_col_mut(&mut self, x: usize) -> StridedSliceMut<'_, T> {
         unsafe {
             StridedSliceMut::from_raw_parts(
-                ptr_mut_offset(self.ptr, x, std::mem::size_of::<T>() as isize),
+                ptr_offset(self.ptr(), x, std::mem::size_of::<T>() as isize).as_ptr(),
                 self.stride() as isize,
                 self.height(),
             )
@@ -302,37 +333,70 @@ impl<'a, T> ImageViewMut<'a, T> {
         }
     }
 
+    pub fn into_rows(self) -> ImageRowIter<'a, T> {
+        ImageRowIter(ImageRowIterPtr(self.into_view()), PhantomData)
+    }
+    pub fn into_cols(self) -> ImageColIter<'a, T> {
+        ImageColIter(ImageColIterPtr(self.into_view()), PhantomData)
+    }
+    pub fn rows(&self) -> ImageRowIter<'_, T> {
+        self.view().into_rows()
+    }
+    pub fn cols(&self) -> ImageColIter<'_, T> {
+        self.view().into_cols()
+    }
+
+    pub fn into_rows_mut(self) -> ImageRowIterMut<'a, T> {
+        ImageRowIterMut(ImageRowIterPtr(self.into_view()), PhantomData)
+    }
+    pub fn into_cols_mut(self) -> ImageColIterMut<'a, T> {
+        ImageColIterMut(ImageColIterPtr(self.into_view()), PhantomData)
+    }
+    pub fn rows_mut(&mut self) -> ImageRowIterMut<'_, T> {
+        self.view_mut().into_rows_mut()
+    }
+    pub fn cols_mut(&mut self) -> ImageColIterMut<'_, T> {
+        self.view_mut().into_cols_mut()
+    }
+
     pub fn for_each(&self, f: impl FnMut(usize, usize, &T)) {
         unsafe {
             self.cast_as_const().for_each(f);
         }
     }
     pub fn for_each_mut(&mut self, mut f: impl FnMut(usize, usize, &mut T)) {
-        for_each_ptr_mut(
-            self.ptr,
-            self.width(),
-            self.height(),
-            self.stride(),
-            move |x, y, ptr| f(x, y, unsafe { ptr.as_mut().unwrap_unchecked() }),
-        );
+        for (y, row) in self.rows_mut().enumerate() {
+            for (x, cell) in row.iter_mut().enumerate() {
+                f(x, y, cell)
+            }
+        }
     }
 
+    pub fn into_view(self) -> ImageView<'a, T> {
+        ImageView {
+            ptr: self.ptr(),
+            stride: self.stride(),
+            width: self.width(),
+            height: self.height(),
+            _marker: PhantomData,
+        }
+    }
     pub fn view(&self) -> ImageView<'_, T> {
         unsafe { self.cast_as_const().view() }
     }
     pub fn into_subview(self, x: usize, y: usize, width: usize, height: usize) -> ImageView<'a, T> {
-        unsafe { self.cast_into_const().into_subview(x, y, width, height) }
+        self.into_view().into_subview(x, y, width, height)
     }
     pub fn subview(&self, x: usize, y: usize, width: usize, height: usize) -> ImageView<'_, T> {
         unsafe { self.cast_as_const().subview(x, y, width, height) }
     }
 
     pub fn view_mut(&mut self) -> ImageViewMut<'_, T> {
-        Self {
-            ptr: self.ptr,
-            stride: self.stride,
-            width: self.width,
-            height: self.height,
+        ImageViewMut {
+            ptr: self.ptr(),
+            stride: self.stride(),
+            width: self.width(),
+            height: self.height(),
             _marker: PhantomData,
         }
     }
@@ -353,9 +417,9 @@ impl<'a, T> ImageViewMut<'a, T> {
         let height = height.min(self.height().checked_sub(y).unwrap_or(0));
 
         unsafe {
-            let ptr = self.ptr;
-            let ptr = ptr_mut_offset(ptr, y, self.stride() as isize);
-            let ptr = ptr_mut_offset(ptr, x, std::mem::size_of::<T>() as isize);
+            let ptr = self.ptr();
+            let ptr = ptr_offset(ptr, y, self.stride() as isize);
+            let ptr = ptr_offset(ptr, x, std::mem::size_of::<T>() as isize);
 
             Self {
                 ptr,
@@ -368,9 +432,24 @@ impl<'a, T> ImageViewMut<'a, T> {
     }
 }
 
+unsafe impl<'a, T: Sync> Send for ImageViewMut<'a, T> {}
+unsafe impl<'a, T: Sync> Sync for ImageViewMut<'a, T> {}
+
+impl<T> Default for ImageViewMut<'_, T> {
+    fn default() -> Self {
+        Self {
+            ptr: NonNull::dangling(),
+            stride: Default::default(),
+            width: Default::default(),
+            height: Default::default(),
+            _marker: Default::default(),
+        }
+    }
+}
+
 #[repr(C)]
 pub struct Image<T> {
-    ptr: *mut T,
+    ptr: NonNull<T>,
     stride: usize,
     width: usize,
     height: usize,
@@ -378,12 +457,7 @@ pub struct Image<T> {
 }
 
 impl<T> Image<T> {
-    pub fn with_stride_and_fn(
-        width: usize,
-        height: usize,
-        stride: usize,
-        f: impl Fn(usize, usize) -> T,
-    ) -> Self {
+    pub unsafe fn new_uninit(width: usize, height: usize, stride: usize) -> Self {
         let size = stride * height;
         let align = std::mem::align_of::<T>();
         if stride % align != 0 {
@@ -397,7 +471,7 @@ impl<T> Image<T> {
         }
         unsafe {
             let ptr = if size == 0 {
-                std::ptr::null_mut()
+                NonNull::dangling()
             } else {
                 let layout = Layout::from_size_align_unchecked(size, align);
                 let ptr = std::alloc::alloc(layout) as *mut T;
@@ -406,9 +480,7 @@ impl<T> Image<T> {
                     std::alloc::handle_alloc_error(layout);
                 }
 
-                for_each_ptr_mut(ptr, width, height, stride, move |x, y, ptr| {
-                    ptr.write(f(x, y))
-                });
+                let ptr = NonNull::new_unchecked(ptr);
 
                 ptr
             };
@@ -420,6 +492,24 @@ impl<T> Image<T> {
                 height,
                 _marker: PhantomData,
             }
+        }
+    }
+    pub fn with_stride_and_fn(
+        width: usize,
+        height: usize,
+        stride: usize,
+        mut f: impl FnMut(usize, usize) -> T,
+    ) -> Self {
+        unsafe {
+            let image = Self::new_uninit(width, height, stride);
+
+            for (y, row) in ImageRowIterPtr(image.view()).enumerate() {
+                for (x, cell) in SlicePtr::from(row).enumerate() {
+                    cell.write(f(x, y))
+                }
+            }
+
+            image
         }
     }
 
@@ -470,6 +560,9 @@ impl<T> Image<T> {
     }
     pub fn stride(&self) -> usize {
         self.stride
+    }
+    pub fn ptr(&self) -> NonNull<T> {
+        self.ptr
     }
 
     pub unsafe fn unchecked_get(&self, x: usize, y: usize) -> &T {
@@ -567,65 +660,49 @@ impl<T> Image<T> {
 impl<T> Drop for Image<T> {
     fn drop(&mut self) {
         unsafe {
-            for_each_ptr_mut(
-                self.ptr,
-                self.width(),
-                self.height(),
-                self.stride(),
-                move |_, _, ptr| ptr.drop_in_place(),
-            );
+            for row in ImageRowIterPtr(self.view()) {
+                for cell in SlicePtr::from(row) {
+                    cell.drop_in_place();
+                }
+            }
 
             let size = self.stride().unchecked_mul(self.height());
             let align = std::mem::align_of::<T>();
             let layout = Layout::from_size_align_unchecked(size, align);
 
             if size != 0 {
-                std::alloc::dealloc(self.ptr as *mut u8, layout);
+                std::alloc::dealloc(self.ptr().as_ptr() as *mut u8, layout);
             }
+        }
+    }
+}
+
+unsafe impl<T: Sync> Send for Image<T> {}
+unsafe impl<T: Sync> Sync for Image<T> {}
+
+impl<T> Default for Image<T> {
+    fn default() -> Self {
+        Self {
+            ptr: NonNull::dangling(),
+            stride: Default::default(),
+            width: Default::default(),
+            height: Default::default(),
+            _marker: Default::default(),
         }
     }
 }
 
 impl<T: Clone> Clone for Image<T> {
     fn clone(&self) -> Self {
-        Self::with_stride_and_fn(self.width(), self.height(), self.stride(), |x, y| unsafe {
-            self.unchecked_get(x, y).clone()
-        })
-    }
-}
+        let image = unsafe { Self::new_uninit(self.width(), self.height(), self.stride()) };
 
-fn for_each_ptr<T>(
-    ptr: *const T,
-    width: usize,
-    height: usize,
-    stride: usize,
-    mut f: impl FnMut(usize, usize, *const T),
-) {
-    let mut row = ptr;
-    for y in 0usize..height {
-        let mut cell = row;
-        for x in 0usize..width {
-            f(x, y, cell);
-            cell = unsafe { cell.add(1) };
+        for (row_dst, row_src) in ImageRowIterPtr(image.view()).zip(self.view().rows()) {
+            for (dst, src) in SlicePtr::from(row_dst).zip(row_src) {
+                unsafe { dst.write(src.clone()) };
+            }
         }
-        row = unsafe { row.byte_add(stride) };
-    }
-}
-fn for_each_ptr_mut<T>(
-    ptr: *mut T,
-    width: usize,
-    height: usize,
-    stride: usize,
-    mut f: impl FnMut(usize, usize, *mut T),
-) {
-    let mut row = ptr;
-    for y in 0usize..height {
-        let mut cell = row;
-        for x in 0usize..width {
-            f(x, y, cell);
-            cell = unsafe { cell.add(1) };
-        }
-        row = unsafe { row.byte_add(stride) };
+
+        image
     }
 }
 
