@@ -1,8 +1,12 @@
-use std::{iter::FusedIterator, marker::PhantomData, ptr::NonNull};
+use std::{
+    iter::FusedIterator,
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+    ptr::NonNull,
+};
 
 use super::ptr_offset;
 
-#[repr(C)]
 pub struct StridedSlicePtr<T> {
     ptr: NonNull<T>,
     stride: isize,
@@ -18,13 +22,10 @@ impl<T> StridedSlicePtr<T> {
         }
     }
 
-    pub fn len(&self) -> usize {
-        self.len
-    }
     pub fn stride(&self) -> isize {
         self.stride
     }
-    pub fn as_ptr(&self) -> NonNull<T> {
+    pub fn as_non_null_ptr(&self) -> NonNull<T> {
         self.ptr
     }
 
@@ -57,9 +58,6 @@ impl<T> StridedSlicePtr<T> {
     }
 }
 
-unsafe impl<T: Sync> Send for StridedSlicePtr<T> {}
-unsafe impl<T: Sync> Sync for StridedSlicePtr<T> {}
-
 impl<T> Default for StridedSlicePtr<T> {
     fn default() -> Self {
         Self {
@@ -91,9 +89,9 @@ impl<T> From<StridedSliceMut<'_, T>> for StridedSlicePtr<T> {
 impl<T> From<SlicePtr<T>> for StridedSlicePtr<T> {
     fn from(value: SlicePtr<T>) -> Self {
         Self {
-            ptr: value.ptr,
+            ptr: value.as_non_null_ptr(),
             stride: std::mem::size_of::<T>() as isize,
-            len: value.len,
+            len: value.len(),
         }
     }
 }
@@ -156,7 +154,11 @@ impl<T> Iterator for StridedSlicePtr<T> {
     }
 }
 
-impl<T> ExactSizeIterator for StridedSlicePtr<T> {}
+impl<T> ExactSizeIterator for StridedSlicePtr<T> {
+    fn len(&self) -> usize {
+        self.len
+    }
+}
 impl<T> FusedIterator for StridedSlicePtr<T> {}
 impl<T> DoubleEndedIterator for StridedSlicePtr<T> {
     fn next_back(&mut self) -> Option<Self::Item> {
@@ -171,40 +173,24 @@ impl<T> DoubleEndedIterator for StridedSlicePtr<T> {
             None
         }
     }
+    fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
+        self.len = self.len.saturating_sub(n);
+        self.next_back()
+    }
 }
 
-#[repr(C)]
 pub struct StridedSlice<'a, T>(StridedSlicePtr<T>, PhantomData<&'a [T]>);
-
-impl<T> Default for StridedSlice<'_, T> {
-    fn default() -> Self {
-        Self(StridedSlicePtr::default(), PhantomData)
-    }
-}
-
-impl<T> Clone for StridedSlice<'_, T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<T> Copy for StridedSlice<'_, T> {}
 
 impl<'a, T> StridedSlice<'a, T> {
     pub unsafe fn from_raw_parts(ptr: *const T, stride: isize, len: usize) -> Self {
-        Self(
-            StridedSlicePtr::from_raw_parts(ptr, stride, len),
-            PhantomData,
-        )
+        unsafe { StridedSlicePtr::from_raw_parts(ptr, stride, len).as_strided_slice() }
     }
 
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
     pub fn stride(&self) -> isize {
         self.0.stride()
     }
-    pub fn as_ptr(&self) -> NonNull<T> {
-        self.0.as_ptr()
+    pub fn as_non_null_ptr(&self) -> NonNull<T> {
+        self.0.as_non_null_ptr()
     }
 
     pub unsafe fn unchecked_get(&self, i: usize) -> &T {
@@ -217,6 +203,22 @@ impl<'a, T> StridedSlice<'a, T> {
         unsafe { self.0.get(i).as_ref() }
     }
 }
+
+unsafe impl<T: Sync> Send for StridedSlice<'_, T> {}
+unsafe impl<T: Sync> Sync for StridedSlice<'_, T> {}
+
+impl<T> Default for StridedSlice<'_, T> {
+    fn default() -> Self {
+        unsafe { StridedSlicePtr::default().as_strided_slice() }
+    }
+}
+
+impl<T> Clone for StridedSlice<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T> Copy for StridedSlice<'_, T> {}
 
 impl<'a, 'b, T> PartialEq<StridedSlice<'a, T>> for StridedSlice<'b, T> {
     fn eq(&self, other: &StridedSlice<'a, T>) -> bool {
@@ -262,7 +264,7 @@ impl<'a, T> From<&'a [T]> for StridedSlice<'a, T> {
 }
 impl<'a, T> From<StridedSliceMut<'a, T>> for StridedSlice<'a, T> {
     fn from(value: StridedSliceMut<'a, T>) -> Self {
-        unsafe { Self::from_raw_parts(value.as_ptr().as_ptr(), value.stride(), value.len()) }
+        unsafe { value.0.as_strided_slice() }
     }
 }
 
@@ -296,36 +298,36 @@ impl<'a, T> Iterator for StridedSlice<'a, T> {
     }
 }
 
-impl<'a, T> ExactSizeIterator for StridedSlice<'a, T> {}
+impl<'a, T> ExactSizeIterator for StridedSlice<'a, T> {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
 impl<'a, T> FusedIterator for StridedSlice<'a, T> {}
 impl<'a, T> DoubleEndedIterator for StridedSlice<'a, T> {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.0.next_back().map(|item| unsafe { item.as_ref() })
     }
+    fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
+        self.0.nth_back(n).map(|item| unsafe { item.as_ref() })
+    }
 }
 
-#[repr(C)]
 pub struct StridedSliceMut<'a, T>(StridedSlicePtr<T>, PhantomData<&'a mut [T]>);
 
 impl<'a, T> StridedSliceMut<'a, T> {
     pub unsafe fn from_raw_parts(ptr: *mut T, stride: isize, len: usize) -> Self {
-        Self(
-            StridedSlicePtr::from_raw_parts(ptr, stride, len),
-            PhantomData,
-        )
+        unsafe { StridedSlicePtr::from_raw_parts(ptr, stride, len).as_strided_slice_mut() }
     }
 
-    pub fn len(&self) -> usize {
-        self.0.len()
-    }
     pub fn stride(&self) -> isize {
         self.0.stride()
     }
-    pub fn as_ptr(&self) -> NonNull<T> {
-        self.0.as_ptr()
+    pub fn as_non_null_ptr(&self) -> NonNull<T> {
+        self.0.as_non_null_ptr()
     }
     pub fn as_strided_slice(&mut self) -> StridedSlice<'_, T> {
-        unsafe { StridedSlice::from_raw_parts(self.as_ptr().as_ptr(), self.stride(), self.len()) }
+        unsafe { self.0.as_strided_slice() }
     }
 
     pub unsafe fn unchecked_get(&self, i: usize) -> &T {
@@ -350,6 +352,9 @@ impl<'a, T> StridedSliceMut<'a, T> {
         unsafe { self.0.get(i).as_mut() }
     }
 }
+
+unsafe impl<T: Sync> Send for StridedSliceMut<'_, T> {}
+unsafe impl<T: Sync> Sync for StridedSliceMut<'_, T> {}
 
 impl<'a, 'b, T> PartialEq<StridedSliceMut<'a, T>> for StridedSliceMut<'b, T> {
     fn eq(&self, other: &StridedSliceMut<'a, T>) -> bool {
@@ -418,21 +423,59 @@ impl<'a, T> Iterator for StridedSliceMut<'a, T> {
     }
 }
 
-impl<'a, T> ExactSizeIterator for StridedSliceMut<'a, T> {}
+impl<'a, T> ExactSizeIterator for StridedSliceMut<'a, T> {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
 impl<'a, T> FusedIterator for StridedSliceMut<'a, T> {}
 impl<'a, T> DoubleEndedIterator for StridedSliceMut<'a, T> {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.0.next_back().map(|mut item| unsafe { item.as_mut() })
     }
+    fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
+        self.0.nth_back(n).map(|mut item| unsafe { item.as_mut() })
+    }
 }
 
-pub struct SlicePtr<T> {
-    ptr: NonNull<T>,
-    len: usize,
+pub struct SlicePtr<T>(NonNull<[T]>);
+
+impl<T> SlicePtr<T> {
+    pub unsafe fn from_raw_parts(ptr: NonNull<T>, len: usize) -> Self {
+        Self(NonNull::slice_from_raw_parts(ptr, len))
+    }
+
+    pub fn as_non_null_ptr(&self) -> NonNull<T> {
+        unsafe { NonNull::new_unchecked(self.0.as_ptr() as *mut T) }
+    }
+
+    pub fn as_mut_ptr(&self) -> *mut T {
+        self.as_non_null_ptr().as_ptr()
+    }
+
+    pub unsafe fn unchecked_get(&self, i: usize) -> NonNull<T> {
+        unsafe { self.as_non_null_ptr().add(i) }
+    }
+    pub fn checked_get(&self, i: usize) -> Option<NonNull<T>> {
+        if i < self.len() {
+            Some(unsafe { self.unchecked_get(i) })
+        } else {
+            None
+        }
+    }
+    pub fn get(&self, i: usize) -> NonNull<T> {
+        if i < self.len() {
+            unsafe { self.unchecked_get(i) }
+        } else {
+            panic!(
+                "Trying to access element #{} from a slice with {} elements",
+                i,
+                self.len()
+            )
+        }
+    }
 }
 
-unsafe impl<T: Sync> Send for SlicePtr<T> {}
-unsafe impl<T: Sync> Sync for SlicePtr<T> {}
 impl<T> Copy for SlicePtr<T> {}
 
 impl<T> Clone for SlicePtr<T> {
@@ -443,30 +486,37 @@ impl<T> Clone for SlicePtr<T> {
 
 impl<T> Default for SlicePtr<T> {
     fn default() -> Self {
-        Self {
-            ptr: NonNull::dangling(),
-            len: Default::default(),
-        }
+        unsafe { Self::from_raw_parts(NonNull::dangling(), 0) }
+    }
+}
+
+impl<T> Deref for SlicePtr<T> {
+    type Target = NonNull<[T]>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl<T> DerefMut for SlicePtr<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 
 impl<T> From<NonNull<[T]>> for SlicePtr<T> {
     fn from(value: NonNull<[T]>) -> Self {
-        Self {
-            ptr: unsafe { NonNull::new_unchecked(value.as_ptr() as *mut T) },
-            len: value.len(),
-        }
+        Self(value)
     }
 }
 impl<T> From<SlicePtr<T>> for NonNull<[T]> {
     fn from(value: SlicePtr<T>) -> Self {
-        NonNull::slice_from_raw_parts(value.ptr, value.len)
+        value.0
     }
 }
 
 impl<T> PartialEq for SlicePtr<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.ptr == other.ptr && self.len == other.len
+        std::ptr::eq(self.0.as_ptr(), other.0.as_ptr())
     }
 }
 impl<T> Eq for SlicePtr<T> {}
@@ -475,11 +525,10 @@ impl<T> Iterator for SlicePtr<T> {
     type Item = NonNull<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.len > 0 {
+        if self.len() > 0 {
             unsafe {
-                let ptr = self.ptr;
-                self.ptr = self.ptr.add(1);
-                self.len -= 1;
+                let ptr = self.as_non_null_ptr();
+                *self = Self::from_raw_parts(ptr.add(1), self.len() - 1);
                 Some(ptr)
             }
         } else {
@@ -488,14 +537,14 @@ impl<T> Iterator for SlicePtr<T> {
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.len, Some(self.len))
+        (self.len(), Some(self.len()))
     }
 
     fn count(self) -> usize
     where
         Self: Sized,
     {
-        self.len
+        self.len()
     }
 
     fn last(mut self) -> Option<Self::Item>
@@ -507,28 +556,39 @@ impl<T> Iterator for SlicePtr<T> {
 
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
         unsafe {
-            let n = n.min(self.len);
-            self.ptr = self.ptr.add(n);
-            self.len = self.len.unchecked_sub(n);
+            let n = n.min(self.len());
+            *self =
+                Self::from_raw_parts(self.as_non_null_ptr().add(n), self.len().unchecked_sub(n));
 
             self.next()
         }
     }
 }
 
-impl<T> ExactSizeIterator for SlicePtr<T> {}
+impl<T> ExactSizeIterator for SlicePtr<T> {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
 impl<T> FusedIterator for SlicePtr<T> {}
 impl<T> DoubleEndedIterator for SlicePtr<T> {
     fn next_back(&mut self) -> Option<Self::Item> {
-        if self.len > 0 {
+        if self.len() > 0 {
             unsafe {
-                let len = self.len.unchecked_sub(1);
-                let ptr = self.ptr.add(len);
-                self.len = len;
+                let len = self.len().unchecked_sub(1);
+                let ptr = self.as_non_null_ptr().add(len);
+
+                *self = Self::from_raw_parts(self.as_non_null_ptr(), len);
                 Some(ptr)
             }
         } else {
             None
         }
+    }
+    fn nth_back(&mut self, n: usize) -> Option<Self::Item> {
+        unsafe {
+            *self = Self::from_raw_parts(self.as_non_null_ptr(), self.len().saturating_sub(n));
+        }
+        self.next_back()
     }
 }

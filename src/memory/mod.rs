@@ -2,7 +2,7 @@ mod image;
 mod image_iter;
 mod slice;
 
-pub use image::{Image, ImageView, ImageViewMut};
+pub use image::{Image, ImageView, ImageViewMut, ImageViewPtr};
 pub use image_iter::{
     ImageColIter, ImageColIterMut, ImageColIterPtr, ImageRowIter, ImageRowIterMut, ImageRowIterPtr,
 };
