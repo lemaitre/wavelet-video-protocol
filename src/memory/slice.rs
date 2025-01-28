@@ -131,6 +131,38 @@ impl<T> StridedSlicePtr<T> {
             }
         }
     }
+
+    pub unsafe fn split_at_unchecked(&self, i: usize) -> (Self, Self) {
+        (
+            Self::from_raw_parts(self.as_non_null_ptr().as_ptr(), self.stride(), i),
+            Self::from_raw_parts(
+                self.unchecked_get(i).as_ptr(),
+                self.stride(),
+                self.len().unchecked_sub(i),
+            ),
+        )
+    }
+    pub fn split_at_checked(&self, i: usize) -> Option<(Self, Self)> {
+        if i <= self.len() {
+            Some(unsafe { self.split_at_unchecked(i) })
+        } else {
+            None
+        }
+    }
+    pub fn split_at(&self, i: usize) -> (Self, Self) {
+        if i <= self.len() {
+            unsafe { self.split_at_unchecked(i) }
+        } else {
+            panic!("Cannot split at {i} a slice with {} elements", self.len())
+        }
+    }
+
+    pub fn deinterleave(&self) -> (Self, Self) {
+        (
+            self.subslice(0, self.len(), 2),
+            self.subslice(1, self.len(), 2),
+        )
+    }
 }
 
 impl<T> Default for StridedSlicePtr<T> {
@@ -293,6 +325,16 @@ impl<'a, T> StridedSlice<'a, T> {
     pub fn as_non_null_ptr(&self) -> NonNull<T> {
         self.0.as_non_null_ptr()
     }
+    /// Convert the current mutable slice into a shared slice.
+    pub fn into_strided_slice(self) -> StridedSlice<'a, T> {
+        // SAFETY: Consume the mutable slice, and keep its lifetime
+        unsafe { self.0.as_strided_slice() }
+    }
+    /// Create a borrowed shared slice from the current slice.
+    pub fn as_strided_slice(&mut self) -> StridedSlice<'_, T> {
+        // SAFETY: output borrows the input value
+        unsafe { self.0.as_strided_slice() }
+    }
 
     /// Get a shared reference to the `i`-th element of the slice.
     ///
@@ -350,6 +392,33 @@ impl<'a, T> StridedSlice<'a, T> {
     /// ```
     pub fn subslice(&self, start: usize, len: usize, step: isize) -> StridedSlice<'_, T> {
         unsafe { self.0.subslice(start, len, step).as_strided_slice() }
+    }
+
+    pub unsafe fn split_at_unchecked(
+        &self,
+        i: usize,
+    ) -> (StridedSlice<'_, T>, StridedSlice<'_, T>) {
+        unsafe {
+            let (a, b) = self.0.split_at_unchecked(i);
+            (a.as_strided_slice(), b.as_strided_slice())
+        }
+    }
+    pub fn split_at_checked(&self, i: usize) -> Option<(StridedSlice<'_, T>, StridedSlice<'_, T>)> {
+        self.0
+            .split_at_checked(i)
+            .map(|(a, b)| unsafe { (a.as_strided_slice(), b.as_strided_slice()) })
+    }
+    pub fn split_at(&self, i: usize) -> (StridedSlice<'_, T>, StridedSlice<'_, T>) {
+        unsafe {
+            let (a, b) = self.0.split_at_unchecked(i);
+            (a.as_strided_slice(), b.as_strided_slice())
+        }
+    }
+    pub fn deinterleave(&self) -> (StridedSlice<'_, T>, StridedSlice<'_, T>) {
+        unsafe {
+            let (a, b) = self.0.deinterleave();
+            (a.as_strided_slice(), b.as_strided_slice())
+        }
     }
 }
 
@@ -499,6 +568,16 @@ impl<'a, T> StridedSliceMut<'a, T> {
         // SAFETY: output borrows the input value
         unsafe { self.0.as_strided_slice() }
     }
+    /// Convert the current mutable slice into a shared slice.
+    pub fn into_strided_slice_mut(self) -> StridedSliceMut<'a, T> {
+        // SAFETY: Consume the mutable slice, and keep its lifetime
+        unsafe { self.0.as_strided_slice_mut() }
+    }
+    /// Create a borrowed shared slice from the current slice.
+    pub fn as_strided_slice_mut(&mut self) -> StridedSliceMut<'_, T> {
+        // SAFETY: output borrows the input value
+        unsafe { self.0.as_strided_slice_mut() }
+    }
 
     /// Get a shared reference to the `i`-th element of the slice.
     ///
@@ -634,6 +713,36 @@ impl<'a, T> StridedSliceMut<'a, T> {
         // Moreover, as the output reference borrows from self,
         // No other references could be created as long as the borrow is active.
         unsafe { self.0.subslice(start, len, step).as_strided_slice_mut() }
+    }
+
+    pub unsafe fn split_at_unchecked(
+        &mut self,
+        i: usize,
+    ) -> (StridedSliceMut<'_, T>, StridedSliceMut<'_, T>) {
+        unsafe {
+            let (a, b) = self.0.split_at_unchecked(i);
+            (a.as_strided_slice_mut(), b.as_strided_slice_mut())
+        }
+    }
+    pub fn split_at_checked(
+        &mut self,
+        i: usize,
+    ) -> Option<(StridedSliceMut<'_, T>, StridedSliceMut<'_, T>)> {
+        self.0
+            .split_at_checked(i)
+            .map(|(a, b)| unsafe { (a.as_strided_slice_mut(), b.as_strided_slice_mut()) })
+    }
+    pub fn split_at(&mut self, i: usize) -> (StridedSliceMut<'_, T>, StridedSliceMut<'_, T>) {
+        unsafe {
+            let (a, b) = self.0.split_at_unchecked(i);
+            (a.as_strided_slice_mut(), b.as_strided_slice_mut())
+        }
+    }
+    pub fn deinterleave(&mut self) -> (StridedSliceMut<'_, T>, StridedSliceMut<'_, T>) {
+        unsafe {
+            let (a, b) = self.0.deinterleave();
+            (a.as_strided_slice_mut(), b.as_strided_slice_mut())
+        }
     }
 }
 
