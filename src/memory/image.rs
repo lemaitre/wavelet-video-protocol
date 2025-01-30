@@ -1,3 +1,5 @@
+#![allow(clippy::missing_safety_doc)]
+
 use std::{alloc::Layout, marker::PhantomData, mem::MaybeUninit, ptr::NonNull};
 
 use super::{
@@ -124,8 +126,8 @@ impl<T> ImageViewPtr<T> {
     pub fn subview(&self, x: usize, y: usize, width: usize, height: usize) -> Self {
         let x = x.min(self.width());
         let y = y.min(self.height());
-        let width = width.min(self.width().checked_sub(x).unwrap_or(0));
-        let height = height.min(self.height().checked_sub(y).unwrap_or(0));
+        let width = width.min(self.width().saturating_sub(x));
+        let height = height.min(self.height().saturating_sub(y));
 
         unsafe {
             let ptr = self.ptr();
@@ -244,8 +246,8 @@ impl<'a, T> ImageView<'a, T> {
     }
 }
 
-unsafe impl<'a, T: Sync> Send for ImageView<'a, T> {}
-unsafe impl<'a, T: Sync> Sync for ImageView<'a, T> {}
+unsafe impl<T: Sync> Send for ImageView<'_, T> {}
+unsafe impl<T: Sync> Sync for ImageView<'_, T> {}
 
 impl<T> Default for ImageView<'_, T> {
     fn default() -> Self {
@@ -424,8 +426,8 @@ impl<'a, T> ImageViewMut<'a, T> {
     }
 }
 
-unsafe impl<'a, T: Sync> Send for ImageViewMut<'a, T> {}
-unsafe impl<'a, T: Sync> Sync for ImageViewMut<'a, T> {}
+unsafe impl<T: Sync> Send for ImageViewMut<'_, T> {}
+unsafe impl<T: Sync> Sync for ImageViewMut<'_, T> {}
 
 impl<T> Default for ImageViewMut<'_, T> {
     fn default() -> Self {
@@ -468,9 +470,7 @@ impl<T> Image<T> {
                     std::alloc::handle_alloc_error(layout);
                 }
 
-                let ptr = NonNull::new_unchecked(ptr);
-
-                ptr
+                NonNull::new_unchecked(ptr)
             };
 
             Image(
@@ -724,8 +724,6 @@ impl<T: Clone> Clone for Image<T> {
 
 #[cfg(test)]
 mod test {
-    use std::usize;
-
     use super::Image;
 
     #[test]

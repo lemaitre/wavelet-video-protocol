@@ -23,7 +23,7 @@ pub fn load_pgm(path: impl AsRef<std::path::Path>) -> Result<Image<u8>, std::io:
             None => {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Wrong PGM file: Unexpected end of file"),
+                    String::from("Wrong PGM file: Unexpected end of file"),
                 ))
             }
             Some('#') => (),
@@ -33,13 +33,15 @@ pub fn load_pgm(path: impl AsRef<std::path::Path>) -> Result<Image<u8>, std::io:
                         std::io::Error::new(std::io::ErrorKind::InvalidData, err)
                     })?);
                 }
-                if nums.len() > 3 {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!("Wrong PGM file format"),
-                    ));
-                } else if nums.len() == 3 {
-                    break;
+                match nums.len() {
+                    ..3 => (),
+                    3 => break,
+                    4.. => {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            String::from("Wrong PGM file format"),
+                        ));
+                    }
                 }
             }
         }
@@ -52,7 +54,7 @@ pub fn load_pgm(path: impl AsRef<std::path::Path>) -> Result<Image<u8>, std::io:
     if max_value >= 256 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("Wrong PGM file: max value too large"),
+            String::from("Wrong PGM file: max value too large"),
         ));
     }
 
@@ -73,6 +75,7 @@ pub fn save_pgm(
         std::fs::OpenOptions::new()
             .write(true)
             .create(true)
+            .truncate(true)
             .open(path)?,
     );
 

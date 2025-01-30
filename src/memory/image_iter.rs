@@ -192,13 +192,13 @@ impl<'a, T> Iterator for ImageRowIter<'a, T> {
     }
 }
 
-impl<'a, T> ExactSizeIterator for ImageRowIter<'a, T> {
+impl<T> ExactSizeIterator for ImageRowIter<'_, T> {
     fn len(&self) -> usize {
         self.0.len()
     }
 }
-impl<'a, T> FusedIterator for ImageRowIter<'a, T> {}
-impl<'a, T> DoubleEndedIterator for ImageRowIter<'a, T> {
+impl<T> FusedIterator for ImageRowIter<'_, T> {}
+impl<T> DoubleEndedIterator for ImageRowIter<'_, T> {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.0.next_back().map(|ptr| unsafe { ptr.as_ref() })
     }
@@ -242,13 +242,13 @@ impl<'a, T> Iterator for ImageRowIterMut<'a, T> {
     }
 }
 
-impl<'a, T> ExactSizeIterator for ImageRowIterMut<'a, T> {
+impl<T> ExactSizeIterator for ImageRowIterMut<'_, T> {
     fn len(&self) -> usize {
         self.0.len()
     }
 }
-impl<'a, T> FusedIterator for ImageRowIterMut<'a, T> {}
-impl<'a, T> DoubleEndedIterator for ImageRowIterMut<'a, T> {
+impl<T> FusedIterator for ImageRowIterMut<'_, T> {}
+impl<T> DoubleEndedIterator for ImageRowIterMut<'_, T> {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.0.next_back().map(|mut ptr| unsafe { ptr.as_mut() })
     }
@@ -292,13 +292,13 @@ impl<'a, T> Iterator for ImageColIter<'a, T> {
     }
 }
 
-impl<'a, T> ExactSizeIterator for ImageColIter<'a, T> {
+impl<T> ExactSizeIterator for ImageColIter<'_, T> {
     fn len(&self) -> usize {
         self.0.len()
     }
 }
-impl<'a, T> FusedIterator for ImageColIter<'a, T> {}
-impl<'a, T> DoubleEndedIterator for ImageColIter<'a, T> {
+impl<T> FusedIterator for ImageColIter<'_, T> {}
+impl<T> DoubleEndedIterator for ImageColIter<'_, T> {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.0
             .next_back()
@@ -352,13 +352,13 @@ impl<'a, T> Iterator for ImageColIterMut<'a, T> {
     }
 }
 
-impl<'a, T> ExactSizeIterator for ImageColIterMut<'a, T> {
+impl<T> ExactSizeIterator for ImageColIterMut<'_, T> {
     fn len(&self) -> usize {
         self.0.len()
     }
 }
-impl<'a, T> FusedIterator for ImageColIterMut<'a, T> {}
-impl<'a, T> DoubleEndedIterator for ImageColIterMut<'a, T> {
+impl<T> FusedIterator for ImageColIterMut<'_, T> {}
+impl<T> DoubleEndedIterator for ImageColIterMut<'_, T> {
     fn next_back(&mut self) -> Option<Self::Item> {
         self.0
             .next_back()

@@ -78,8 +78,7 @@ fn scale_up(x: i16, t: i16, n: i16) -> i16 {
 }
 
 fn encode(x: i16) -> i16 {
-    let x = scale_down(x, 64, 3);
-    x
+    scale_down(x, 64, 3)
 
     // match x {
     //     ..-256 => -17, // x < -256
@@ -119,8 +118,7 @@ fn encode(x: i16) -> i16 {
     // }
 }
 fn decode(x: i16) -> i16 {
-    let x = scale_up(x, 64, 3);
-    x
+    scale_up(x, 64, 3)
 
     // match x {
     //     ..=-17 => -256, // x < -256

@@ -1,3 +1,5 @@
+#![allow(clippy::missing_safety_doc)]
+
 use std::{
     iter::FusedIterator,
     marker::PhantomData,
@@ -120,7 +122,7 @@ impl<T> StridedSlicePtr<T> {
                     if available_len > 0 {
                         available_len = available_len
                             .unchecked_sub(1)
-                            .div_euclid(step.get().abs() as usize)
+                            .div_euclid(step.get().unsigned_abs())
                             .unchecked_add(1);
                     }
                     let len = len.min(available_len);
@@ -439,19 +441,19 @@ impl<T> Clone for StridedSlice<'_, T> {
 }
 impl<T> Copy for StridedSlice<'_, T> {}
 
-impl<'a, 'b, T> PartialEq<StridedSlice<'a, T>> for StridedSlice<'b, T> {
+impl<'a, T> PartialEq<StridedSlice<'a, T>> for StridedSlice<'_, T> {
     fn eq(&self, other: &StridedSlice<'a, T>) -> bool {
         self.0 == other.0
     }
 }
 impl<T> Eq for StridedSlice<'_, T> {}
-impl<'a, 'b, T> PartialEq<StridedSliceMut<'a, T>> for StridedSlice<'b, T> {
+impl<'a, T> PartialEq<StridedSliceMut<'a, T>> for StridedSlice<'_, T> {
     fn eq(&self, other: &StridedSliceMut<'a, T>) -> bool {
         self.0 == other.0
     }
 }
 
-impl<'a, T> std::ops::Index<usize> for StridedSlice<'a, T> {
+impl<T> std::ops::Index<usize> for StridedSlice<'_, T> {
     type Output = T;
 
     fn index(&self, index: usize) -> &Self::Output {
@@ -514,13 +516,13 @@ impl<'a, T> Iterator for StridedSlice<'a, T> {
     }
 }
 
-impl<'a, T> ExactSizeIterator for StridedSlice<'a, T> {
+impl<T> ExactSizeIterator for StridedSlice<'_, T> {
     fn len(&self) -> usize {
         self.0.len()
     }
 }
-impl<'a, T> FusedIterator for StridedSlice<'a, T> {}
-impl<'a, T> DoubleEndedIterator for StridedSlice<'a, T> {
+impl<T> FusedIterator for StridedSlice<'_, T> {}
+impl<T> DoubleEndedIterator for StridedSlice<'_, T> {
     fn next_back(&mut self) -> Option<Self::Item> {
         // SAFETY: [`Self::according to from_raw_parts`],
         // there could only be StridedSlice that reference the elements
@@ -629,7 +631,7 @@ impl<'a, T> StridedSliceMut<'a, T> {
     }
     /// Get a mutable reference to the `i`-th element of the slice.
     /// Panic if `i` is out of bound.
-    pub fn get_mut(&self, i: usize) -> &mut T {
+    pub fn get_mut(&mut self, i: usize) -> &mut T {
         // SAFETY: [`Self::according to from_raw_parts`],
         // self is the only active slice onto the elements.
         // Moreover, as the output reference borrows from self,
@@ -750,26 +752,26 @@ impl<'a, T> StridedSliceMut<'a, T> {
 unsafe impl<T: Sync> Send for StridedSliceMut<'_, T> {}
 unsafe impl<T: Sync> Sync for StridedSliceMut<'_, T> {}
 
-impl<'a, 'b, T> PartialEq<StridedSliceMut<'a, T>> for StridedSliceMut<'b, T> {
+impl<'a, T> PartialEq<StridedSliceMut<'a, T>> for StridedSliceMut<'_, T> {
     fn eq(&self, other: &StridedSliceMut<'a, T>) -> bool {
         self.0 == other.0
     }
 }
 impl<T> Eq for StridedSliceMut<'_, T> {}
-impl<'a, 'b, T> PartialEq<StridedSlice<'a, T>> for StridedSliceMut<'b, T> {
+impl<'a, T> PartialEq<StridedSlice<'a, T>> for StridedSliceMut<'_, T> {
     fn eq(&self, other: &StridedSlice<'a, T>) -> bool {
         self.0 == other.0
     }
 }
 
-impl<'a, T> std::ops::Index<usize> for StridedSliceMut<'a, T> {
+impl<T> std::ops::Index<usize> for StridedSliceMut<'_, T> {
     type Output = T;
 
     fn index(&self, index: usize) -> &Self::Output {
         self.get(index)
     }
 }
-impl<'a, T> std::ops::IndexMut<usize> for StridedSliceMut<'a, T> {
+impl<T> std::ops::IndexMut<usize> for StridedSliceMut<'_, T> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         self.get_mut(index)
     }
@@ -824,13 +826,13 @@ impl<'a, T> Iterator for StridedSliceMut<'a, T> {
     }
 }
 
-impl<'a, T> ExactSizeIterator for StridedSliceMut<'a, T> {
+impl<T> ExactSizeIterator for StridedSliceMut<'_, T> {
     fn len(&self) -> usize {
         self.0.len()
     }
 }
-impl<'a, T> FusedIterator for StridedSliceMut<'a, T> {}
-impl<'a, T> DoubleEndedIterator for StridedSliceMut<'a, T> {
+impl<T> FusedIterator for StridedSliceMut<'_, T> {}
+impl<T> DoubleEndedIterator for StridedSliceMut<'_, T> {
     fn next_back(&mut self) -> Option<Self::Item> {
         // SAFETY: [`Self::according to from_raw_parts`],
         // self is the only active slice onto the elements.
@@ -945,7 +947,7 @@ impl<T> Iterator for SlicePtr<T> {
     type Item = NonNull<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.len() > 0 {
+        if !self.0.is_empty() {
             unsafe {
                 let ptr = self.as_non_null_ptr();
                 *self = Self::from_raw_parts(ptr.add(1), self.len() - 1);
@@ -993,7 +995,7 @@ impl<T> ExactSizeIterator for SlicePtr<T> {
 impl<T> FusedIterator for SlicePtr<T> {}
 impl<T> DoubleEndedIterator for SlicePtr<T> {
     fn next_back(&mut self) -> Option<Self::Item> {
-        if self.len() > 0 {
+        if !self.0.is_empty() {
             unsafe {
                 let len = self.len().unchecked_sub(1);
                 let ptr = self.as_non_null_ptr().add(len);
@@ -1018,7 +1020,7 @@ mod test {
 
     use super::{SlicePtr, StridedSlice};
 
-    const SLICES: &'static [&'static [i32]] = &[
+    const SLICES: &[&[i32]] = &[
         &[],
         &[0],
         &[0, 1],
