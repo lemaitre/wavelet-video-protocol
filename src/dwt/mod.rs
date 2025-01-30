@@ -1,5 +1,6 @@
 use crate::memory::{ImageViewMut, StridedSliceMut};
 
+pub mod daub;
 pub mod haar;
 pub mod predict;
 

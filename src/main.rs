@@ -1,5 +1,6 @@
 #[allow(unused)]
 use dwt::{
+    daub::{Daub53, LossyDaub53},
     haar::{Haar, LossyHaar},
     predict::Predict,
     Dwt2,
@@ -55,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut output = input.clone();
     let mut reconstructed = input.clone();
 
-    let dwt = Predict(Haar);
+    let dwt = LossyDaub53;
 
     for i in 0..N {
         let i = if LOW_BAND_ONLY { i } else { 0 };
@@ -107,6 +108,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     image_downcast(reconstructed.view(), reconstructed8.view_mut());
+
+    println!("Written");
 
     let mut s1 = 0i64;
     let mut s2 = 0i64;

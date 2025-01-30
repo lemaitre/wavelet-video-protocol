@@ -49,7 +49,9 @@ pub struct LossyHaar;
 
 impl Dwt0<u8> for LossyHaar {
     fn dwt0(&self, a: u8, b: u8) -> (u8, u8) {
-        let h = (((b as i16) - (a as i16)) / 2) as u8;
+        let h = (b as i16) - (a as i16);
+        let h = h / 2;
+        let h = h.clamp(-128, 127) as u8;
         let l = a.wrapping_add(h);
 
         // Offset value for nicer display
@@ -63,7 +65,7 @@ impl Dwt0<u8> for LossyHaar {
         let h = h.wrapping_sub(128) as i8;
 
         let a = l.saturating_add_signed(h.saturating_neg());
-        let b = l.saturating_add_signed(h);
+        let b = a.saturating_add_signed(h).saturating_add_signed(h);
 
         (a, b)
     }
