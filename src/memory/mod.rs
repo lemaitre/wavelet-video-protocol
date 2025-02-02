@@ -1,12 +1,14 @@
 mod image;
 mod image_iter;
 mod slice;
+mod strided;
 
 pub use image::{Image, ImageView, ImageViewMut, ImageViewPtr};
 pub use image_iter::{
     ImageColIter, ImageColIterMut, ImageColIterPtr, ImageRowIter, ImageRowIterMut, ImageRowIterPtr,
 };
 pub use slice::{StridedSlice, StridedSliceMut, StridedSlicePtr};
+pub use strided::Strided;
 
 /// Adjust the pointer with the given offset
 /// Semantically equivalent to ADDR + i * stride
