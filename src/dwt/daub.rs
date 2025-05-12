@@ -5,18 +5,21 @@ pub struct Daub53;
 impl Dwt1<u8> for Daub53 {
     fn dwt1(
         &self,
-        mut sig: crate::memory::StridedSliceMut<'_, u8>,
-        mut tmp: crate::memory::StridedSliceMut<'_, u8>,
+        mut sig: crate::memory::Strided<&mut u8>,
+        mut tmp: crate::memory::Strided<&mut u8>,
     ) {
-        for (&src, dst) in sig.as_strided_slice().zip(tmp.as_strided_slice_mut()) {
+        for (&src, dst) in sig.iter().zip(tmp.iter_mut()) {
             *dst = src;
         }
-        let tmp = tmp.into_strided_slice();
-        let (src1, src2) = tmp.deinterleave();
-        let (dst1, dst2) = sig.split_at(sig.len() / 2);
+        let [src1, src2] = tmp.deinterleave_array();
+        let (dst1, dst2) = sig.split_at_mut(sig.len() / 2);
 
         let mut h0 = 0i16;
-        for (i, (&a, (&b, (l, h)))) in src1.zip(src2.zip(dst1.zip(dst2))).enumerate() {
+        for (i, (&a, (&b, (l, h)))) in src1
+            .into_iter()
+            .zip(src2.into_iter().zip(dst1.into_iter().zip(dst2)))
+            .enumerate()
+        {
             let c = tmp.checked_get(2 * i + 2).copied().unwrap_or(a);
             *h = b.wrapping_sub(a.midpoint(c));
             *l = a.wrapping_add_signed(((h0 + *h as i8 as i16) / 4) as i8);
@@ -28,18 +31,22 @@ impl Dwt1<u8> for Daub53 {
 
     fn idwt1(
         &self,
-        mut sig: crate::memory::StridedSliceMut<'_, u8>,
-        mut tmp: crate::memory::StridedSliceMut<'_, u8>,
+        sig: crate::memory::Strided<&mut u8>,
+        mut tmp: crate::memory::Strided<&mut u8>,
     ) {
-        for (&src, dst) in sig.as_strided_slice().zip(tmp.as_strided_slice_mut()) {
+        for (&src, dst) in sig.iter().zip(tmp.iter_mut()) {
             *dst = src;
         }
-        let tmp = tmp.into_strided_slice();
         let (src1, src2) = tmp.split_at(tmp.len() / 2);
-        let (dst1, dst2) = sig.deinterleave();
+        let [dst1, dst2] = sig.into_deinterleave_array();
 
         let mut c = None;
-        for (i, (&l, (&h, (dst1, dst2)))) in src1.zip(src2.zip(dst1.zip(dst2))).enumerate().rev() {
+        for (i, (&l, (&h, (dst1, dst2)))) in src1
+            .into_iter()
+            .zip(src2.into_iter().zip(dst1.into_iter().zip(dst2)))
+            .enumerate()
+            .rev()
+        {
             let h0 = src2
                 .checked_get(i.wrapping_sub(1))
                 .copied()
@@ -161,18 +168,21 @@ fn decode(x: i16) -> i16 {
 impl Dwt1<u8> for LossyDaub53 {
     fn dwt1(
         &self,
-        mut sig: crate::memory::StridedSliceMut<'_, u8>,
-        mut tmp: crate::memory::StridedSliceMut<'_, u8>,
+        mut sig: crate::memory::Strided<&mut u8>,
+        mut tmp: crate::memory::Strided<&mut u8>,
     ) {
-        for (&src, dst) in sig.as_strided_slice().zip(tmp.as_strided_slice_mut()) {
+        for (&src, dst) in sig.iter().zip(tmp.iter_mut()) {
             *dst = src;
         }
-        let tmp = tmp.into_strided_slice();
-        let (src1, src2) = tmp.deinterleave();
-        let (dst1, dst2) = sig.split_at(sig.len() / 2);
+        let [src1, src2] = tmp.deinterleave_array();
+        let (dst1, dst2) = sig.split_at_mut(sig.len() / 2);
 
         let mut h0 = 0i16;
-        for (i, (&a, (&b, (dst1, dst2)))) in src1.zip(src2.zip(dst1.zip(dst2))).enumerate() {
+        for (i, (&a, (&b, (dst1, dst2)))) in src1
+            .into_iter()
+            .zip(src2.into_iter().zip(dst1.into_iter().zip(dst2)))
+            .enumerate()
+        {
             let c = tmp.checked_get(2 * i + 2).copied().unwrap_or(a);
             let a = a as i16;
             let b = b as i16;
@@ -193,18 +203,22 @@ impl Dwt1<u8> for LossyDaub53 {
 
     fn idwt1(
         &self,
-        mut sig: crate::memory::StridedSliceMut<'_, u8>,
-        mut tmp: crate::memory::StridedSliceMut<'_, u8>,
+        sig: crate::memory::Strided<&mut u8>,
+        mut tmp: crate::memory::Strided<&mut u8>,
     ) {
-        for (&src, dst) in sig.as_strided_slice().zip(tmp.as_strided_slice_mut()) {
+        for (&src, dst) in sig.iter().zip(tmp.iter_mut()) {
             *dst = src;
         }
-        let tmp = tmp.into_strided_slice();
         let (src1, src2) = tmp.split_at(tmp.len() / 2);
-        let (dst1, dst2) = sig.deinterleave();
+        let [dst1, dst2] = sig.into_deinterleave_array();
 
         let mut c = None;
-        for (i, (&l, (&h, (dst1, dst2)))) in src1.zip(src2.zip(dst1.zip(dst2))).enumerate().rev() {
+        for (i, (&l, (&h, (dst1, dst2)))) in src1
+            .into_iter()
+            .zip(src2.into_iter().zip(dst1.into_iter().zip(dst2)))
+            .enumerate()
+            .rev()
+        {
             let h0 = src2
                 .checked_get(i.wrapping_sub(1))
                 .copied()

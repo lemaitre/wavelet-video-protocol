@@ -43,20 +43,20 @@ fn image_downcast(src: ImageView<'_, u8>, mut dst: ImageViewMut<'_, u8>) {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    const N: usize = 4;
+    const N: usize = 1;
     const LOW_BAND_ONLY: bool = false;
 
-    let input8 = io::load_pgm("input.pgm")?;
+    let input8 = io::load_pgm("input-small.pgm")?;
     let mut output8 = input8.clone();
     let mut reconstructed8 = input8.clone();
-    let mut input = Image::with_stride(input8.width(), input8.height(), input8.stride() * 2);
+    let mut input = Image::with_stride(input8.width(), input8.height(), input8.stride());
     image_upcast(input8.view(), input.view_mut());
     let input = input;
     let mut tmp = input.clone();
     let mut output = input.clone();
     let mut reconstructed = input.clone();
 
-    let dwt = LossyDaub53;
+    let dwt = Daub53;
 
     for i in 0..N {
         let i = if LOW_BAND_ONLY { i } else { 0 };

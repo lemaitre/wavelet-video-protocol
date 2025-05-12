@@ -2,6 +2,14 @@
 
 use std::{hash::Hash, iter::FusedIterator, marker::PhantomData, num::NonZero, ptr::NonNull};
 
+pub const STEP_1: NonZero<isize> = unsafe { NonZero::new_unchecked(1) };
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Never {}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Owned<T: ?Sized>(PhantomData<Box<T>>, Never);
+
 pub unsafe trait FromPtr {
     type Pointee;
     type State: Clone + Default + std::fmt::Debug;
@@ -40,6 +48,9 @@ unsafe impl<T> FromPtr for NonNull<[T]> {
     unsafe fn from_ptr(pointer: NonNull<Self::Pointee>, state: Self::State) -> Self {
         NonNull::slice_from_raw_parts(pointer, state)
     }
+    fn state_total_size(state: &Self::State) -> usize {
+        *state
+    }
 }
 
 unsafe impl<T> FromPtr for *const T {
@@ -64,6 +75,9 @@ unsafe impl<T> FromPtr for *const [T] {
 
     unsafe fn from_ptr(pointer: NonNull<Self::Pointee>, state: Self::State) -> Self {
         std::ptr::slice_from_raw_parts(pointer.as_ptr(), state)
+    }
+    fn state_total_size(state: &Self::State) -> usize {
+        *state
     }
 }
 
@@ -90,6 +104,9 @@ unsafe impl<T> FromPtr for *mut [T] {
     unsafe fn from_ptr(pointer: NonNull<Self::Pointee>, state: Self::State) -> Self {
         std::ptr::slice_from_raw_parts_mut(pointer.as_ptr(), state)
     }
+    fn state_total_size(state: &Self::State) -> usize {
+        *state
+    }
 }
 
 unsafe impl<T> FromPtr for &T {
@@ -115,6 +132,9 @@ unsafe impl<T> FromPtr for &[T] {
     unsafe fn from_ptr(pointer: NonNull<Self::Pointee>, state: Self::State) -> Self {
         unsafe { std::slice::from_raw_parts(pointer.as_ptr(), state) }
     }
+    fn state_total_size(state: &Self::State) -> usize {
+        *state
+    }
 }
 
 unsafe impl<T> FromPtr for &mut T {
@@ -137,8 +157,39 @@ unsafe impl<T> FromPtr for &mut [T] {
     where
         Self: 'a;
 
-    unsafe fn from_ptr(mut pointer: NonNull<Self::Pointee>, state: Self::State) -> Self {
-        unsafe { std::slice::from_raw_parts_mut(pointer.as_mut(), state) }
+    unsafe fn from_ptr(pointer: NonNull<Self::Pointee>, state: Self::State) -> Self {
+        unsafe { std::slice::from_raw_parts_mut(pointer.as_ptr(), state) }
+    }
+    fn state_total_size(state: &Self::State) -> usize {
+        *state
+    }
+}
+
+unsafe impl<T> FromPtr for Owned<T> {
+    type Pointee = T;
+    type State = ();
+    type Borrow<'a>
+        = &'a T
+    where
+        Self: 'a;
+
+    unsafe fn from_ptr(_pointer: NonNull<Self::Pointee>, _state: Self::State) -> Self {
+        panic!("Cannot move from a view where the underlying type is Owned")
+    }
+}
+unsafe impl<T> FromPtr for Owned<[T]> {
+    type Pointee = T;
+    type State = usize;
+    type Borrow<'a>
+        = &'a [T]
+    where
+        Self: 'a;
+
+    unsafe fn from_ptr(_pointer: NonNull<Self::Pointee>, _state: Self::State) -> Self {
+        panic!("Cannot move from a view where the underlying type is Owned")
+    }
+    fn state_total_size(state: &Self::State) -> usize {
+        *state
     }
 }
 
@@ -200,6 +251,19 @@ unsafe impl<T> FromPtrMut for &mut T {
         Self: 'a;
 }
 unsafe impl<T> FromPtrMut for &mut [T] {
+    type BorrowMut<'a>
+        = &'a mut [T]
+    where
+        Self: 'a;
+}
+
+unsafe impl<T> FromPtrMut for Owned<T> {
+    type BorrowMut<'a>
+        = &'a mut T
+    where
+        Self: 'a;
+}
+unsafe impl<T> FromPtrMut for Owned<[T]> {
     type BorrowMut<'a>
         = &'a mut [T]
     where
@@ -338,6 +402,7 @@ unsafe impl<T: PtrLike> PtrLike for Strided<T> {
         Self: 'a;
 }
 
+#[allow(clippy::len_without_is_empty)]
 pub unsafe trait SliceLike {
     type GetItem: FromPtr;
 
@@ -678,7 +743,7 @@ impl<T: FromPtr> Strided<T> {
             unsafe {
                 let len = self.len().unchecked_sub(1);
                 Some((
-                    self.unchecked_clone().unchecked_into_get(0),
+                    self.unchecked_clone().unchecked_into_get(len),
                     self.unchecked_into_partial(0, len, 1),
                 ))
             }
@@ -1314,6 +1379,24 @@ impl<'a, T> From<Strided<&'a mut T>> for Strided<&'a T> {
     }
 }
 
+impl<T> From<Strided<NonNull<[T]>>> for Strided<Strided<NonNull<T>>> {
+    fn from(value: Strided<NonNull<[T]>>) -> Self {
+        unsafe {
+            Strided::from_raw_parts(
+                value.as_non_null_ptr().cast(),
+                StridedState {
+                    len: value.len(),
+                    stride: value.stride(),
+                    inner: StridedState {
+                        len: value.state().inner,
+                        stride: std::mem::size_of::<T>() as isize,
+                        inner: (),
+                    },
+                },
+            )
+        }
+    }
+}
 impl<T, const N: usize> From<Strided<NonNull<[T; N]>>> for Strided<Strided<NonNull<T>>> {
     fn from(value: Strided<NonNull<[T; N]>>) -> Self {
         match NonZero::new(N) {
@@ -1349,8 +1432,18 @@ impl<T, const N: usize> From<Strided<NonNull<[T; N]>>> for Strided<Strided<NonNu
     }
 }
 
+impl<'a, T> From<Strided<&'a [T]>> for Strided<Strided<NonNull<T>>> {
+    fn from(value: Strided<&'a [T]>) -> Self {
+        Self::from(value.as_strided_ptr())
+    }
+}
 impl<'a, T, const N: usize> From<Strided<&'a [T; N]>> for Strided<Strided<NonNull<T>>> {
     fn from(value: Strided<&'a [T; N]>) -> Self {
+        Self::from(value.as_strided_ptr())
+    }
+}
+impl<'a, T> From<Strided<&'a mut [T]>> for Strided<Strided<NonNull<T>>> {
+    fn from(value: Strided<&'a mut [T]>) -> Self {
         Self::from(value.as_strided_ptr())
     }
 }
@@ -1371,9 +1464,19 @@ impl<'a, T, const N: usize> From<&'a mut [[T; N]]> for Strided<Strided<NonNull<T
     }
 }
 
+impl<'a, T> From<Strided<&'a [T]>> for Strided<Strided<&'a T>> {
+    fn from(value: Strided<&'a [T]>) -> Self {
+        unsafe { Strided::<Strided<NonNull<T>>>::from(value).cast_as_ref() }
+    }
+}
 impl<'a, T, const N: usize> From<Strided<&'a [T; N]>> for Strided<Strided<&'a T>> {
     fn from(value: Strided<&'a [T; N]>) -> Self {
         unsafe { Strided::<Strided<NonNull<T>>>::from(value).cast_as_ref() }
+    }
+}
+impl<'a, T> From<Strided<&'a mut [T]>> for Strided<Strided<&'a T>> {
+    fn from(value: Strided<&'a mut [T]>) -> Self {
+        Self::from(value.into_strided_ref())
     }
 }
 impl<'a, T, const N: usize> From<Strided<&'a mut [T; N]>> for Strided<Strided<&'a T>> {
@@ -1393,6 +1496,11 @@ impl<'a, T, const N: usize> From<&'a mut [[T; N]]> for Strided<Strided<&'a T>> {
     }
 }
 
+impl<'a, T> From<Strided<&'a mut [T]>> for Strided<Strided<&'a mut T>> {
+    fn from(value: Strided<&'a mut [T]>) -> Self {
+        unsafe { Strided::<Strided<NonNull<T>>>::from(value).cast_as_mut() }
+    }
+}
 impl<'a, T, const N: usize> From<Strided<&'a mut [T; N]>> for Strided<Strided<&'a mut T>> {
     fn from(value: Strided<&'a mut [T; N]>) -> Self {
         unsafe { Strided::<Strided<NonNull<T>>>::from(value).cast_as_mut() }
@@ -1420,8 +1528,20 @@ where
         value.borrow_mut().into()
     }
 }
+impl<T> TryFrom<Strided<NonNull<T>>> for NonNull<[T]> {
+    type Error = Strided<NonNull<T>>;
 
-impl<'a, T: FromPtr> TryFrom<Strided<&'a T>> for &'a [T] {
+    fn try_from(value: Strided<NonNull<T>>) -> Result<Self, Self::Error> {
+        if value.stride() as usize == std::mem::size_of::<T>() {
+            Ok(unsafe {
+                <NonNull<[T]> as FromPtr>::from_ptr(value.as_non_null_ptr(), value.state().len)
+            })
+        } else {
+            Err(value)
+        }
+    }
+}
+impl<'a, T> TryFrom<Strided<&'a T>> for &'a [T] {
     type Error = Strided<&'a T>;
 
     fn try_from(value: Strided<&'a T>) -> Result<Self, Self::Error> {
@@ -1433,7 +1553,7 @@ impl<'a, T: FromPtr> TryFrom<Strided<&'a T>> for &'a [T] {
     }
 }
 
-impl<'a, T: FromPtr> TryFrom<Strided<&'a mut T>> for &'a mut [T] {
+impl<'a, T> TryFrom<Strided<&'a mut T>> for &'a mut [T] {
     type Error = Strided<&'a mut T>;
 
     fn try_from(value: Strided<&'a mut T>) -> Result<Self, Self::Error> {
@@ -1446,7 +1566,7 @@ impl<'a, T: FromPtr> TryFrom<Strided<&'a mut T>> for &'a mut [T] {
         }
     }
 }
-impl<'a, T: FromPtr> TryFrom<Strided<&'a mut T>> for &'a [T] {
+impl<'a, T> TryFrom<Strided<&'a mut T>> for &'a [T] {
     type Error = Strided<&'a mut T>;
 
     fn try_from(value: Strided<&'a mut T>) -> Result<Self, Self::Error> {
@@ -1458,7 +1578,27 @@ impl<'a, T: FromPtr> TryFrom<Strided<&'a mut T>> for &'a [T] {
     }
 }
 
-impl<'a, T: FromPtr> TryFrom<Strided<Strided<&'a T>>> for Strided<&'a [T]> {
+impl<T> TryFrom<Strided<Strided<NonNull<T>>>> for Strided<NonNull<[T]>> {
+    type Error = Strided<Strided<NonNull<T>>>;
+
+    fn try_from(value: Strided<Strided<NonNull<T>>>) -> Result<Self, Self::Error> {
+        if value.state.inner.stride as usize == std::mem::size_of::<T>() {
+            Ok(unsafe {
+                Self::from_raw_parts(
+                    value.as_non_null_ptr(),
+                    StridedState {
+                        len: value.len(),
+                        stride: value.stride(),
+                        inner: value.state.inner.len,
+                    },
+                )
+            })
+        } else {
+            Err(value)
+        }
+    }
+}
+impl<'a, T> TryFrom<Strided<Strided<&'a T>>> for Strided<&'a [T]> {
     type Error = Strided<Strided<&'a T>>;
 
     fn try_from(value: Strided<Strided<&'a T>>) -> Result<Self, Self::Error> {
@@ -1479,7 +1619,7 @@ impl<'a, T: FromPtr> TryFrom<Strided<Strided<&'a T>>> for Strided<&'a [T]> {
     }
 }
 
-impl<'a, T: FromPtr> TryFrom<Strided<Strided<&'a mut T>>> for Strided<&'a mut [T]> {
+impl<'a, T> TryFrom<Strided<Strided<&'a mut T>>> for Strided<&'a mut [T]> {
     type Error = Strided<Strided<&'a mut T>>;
 
     fn try_from(value: Strided<Strided<&'a mut T>>) -> Result<Self, Self::Error> {
@@ -1499,7 +1639,7 @@ impl<'a, T: FromPtr> TryFrom<Strided<Strided<&'a mut T>>> for Strided<&'a mut [T
         }
     }
 }
-impl<'a, T: FromPtr> TryFrom<Strided<Strided<&'a mut T>>> for Strided<&'a [T]> {
+impl<'a, T> TryFrom<Strided<Strided<&'a mut T>>> for Strided<&'a [T]> {
     type Error = Strided<Strided<&'a mut T>>;
 
     fn try_from(value: Strided<Strided<&'a mut T>>) -> Result<Self, Self::Error> {
@@ -1902,6 +2042,50 @@ where
     }
 }
 
+impl<T> std::ops::Index<usize> for Strided<&'_ T> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.get(index)
+    }
+}
+
+impl<T> std::ops::Index<usize> for Strided<&'_ mut T> {
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.get(index)
+    }
+}
+
+impl<T> std::ops::IndexMut<usize> for Strided<&'_ mut T> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        self.get_mut(index)
+    }
+}
+
+impl<T> std::ops::Index<usize> for Strided<&'_ [T]> {
+    type Output = [T];
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.get(index)
+    }
+}
+
+impl<T> std::ops::Index<usize> for Strided<&'_ mut [T]> {
+    type Output = [T];
+
+    fn index(&self, index: usize) -> &Self::Output {
+        self.get(index)
+    }
+}
+
+impl<T> std::ops::IndexMut<usize> for Strided<&'_ mut [T]> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        self.get_mut(index)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use std::num::NonZero;
@@ -1937,6 +2121,47 @@ mod test {
 
         // MIRI: Check that there is no UB when materializing all mut references
         _ = slice.iter_mut().collect::<Vec<&mut _>>();
+    }
+
+    #[test]
+    fn iter_rev() {
+        let mut array = [7, 5, 2, 8];
+        let mut slice = Strided::from_slice(array.as_mut_slice());
+
+        eprintln!("{:?}", slice.iter().rev().copied().collect::<Vec<_>>());
+
+        assert!(slice.iter().rev().copied().eq([8, 2, 5, 7]));
+        assert!(slice.borrow().into_iter().rev().copied().eq([8, 2, 5, 7]));
+
+        assert!(slice.iter_mut().rev().map(|x| *x).eq([8, 2, 5, 7]));
+        assert!(slice
+            .borrow_mut()
+            .into_iter()
+            .rev()
+            .map(|x| *x)
+            .eq([8, 2, 5, 7]));
+
+        assert!(slice
+            .as_strided_ptr()
+            .iter()
+            .rev()
+            .map(|mut x| *unsafe { x.as_mut() })
+            .eq([8, 2, 5, 7]));
+        assert!(slice
+            .as_strided_ptr()
+            .iter_mut()
+            .rev()
+            .map(|mut x| *unsafe { x.as_mut() })
+            .eq([8, 2, 5, 7]));
+        assert!(slice
+            .as_strided_ptr()
+            .into_iter()
+            .rev()
+            .map(|mut x| *unsafe { x.as_mut() })
+            .eq([8, 2, 5, 7]));
+
+        // MIRI: Check that there is no UB when materializing all mut references
+        _ = slice.iter_mut().rev().collect::<Vec<&mut _>>();
     }
 
     #[test]

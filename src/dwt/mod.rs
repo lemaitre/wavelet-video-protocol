@@ -1,4 +1,4 @@
-use crate::memory::{ImageViewMut, StridedSliceMut};
+use crate::memory::{ImageViewMut, Strided};
 
 pub mod daub;
 pub mod haar;
@@ -9,12 +9,12 @@ pub trait Dwt0<T> {
     fn idwt0(&self, l: T, h: T) -> (T, T);
 }
 pub trait Dwt1<T> {
-    fn dwt1(&self, sig: StridedSliceMut<'_, T>, tmp: StridedSliceMut<'_, T>);
+    fn dwt1(&self, sig: Strided<&mut T>, tmp: Strided<&mut T>);
     fn dwt1_slice(&self, sig: &mut [T], tmp: &mut [T]) {
         self.dwt1(sig.into(), tmp.into());
     }
 
-    fn idwt1(&self, sig: StridedSliceMut<'_, T>, tmp: StridedSliceMut<'_, T>);
+    fn idwt1(&self, sig: Strided<&mut T>, tmp: Strided<&mut T>);
     fn idwt1_slice(&self, sig: &mut [T], tmp: &mut [T]) {
         self.idwt1(sig.into(), tmp.into());
     }
@@ -24,35 +24,33 @@ pub trait Dwt2<T> {
     fn idwt2(&self, img: ImageViewMut<'_, T>, tmp: ImageViewMut<'_, T>);
 }
 
-impl<T: Clone, A: Dwt0<T>> Dwt1<T> for A {
-    fn dwt1(
-        &self,
-        mut sig: crate::memory::StridedSliceMut<'_, T>,
-        mut tmp: crate::memory::StridedSliceMut<'_, T>,
-    ) {
-        for (src, dst) in sig.as_strided_slice().zip(tmp.as_strided_slice_mut()) {
+impl<T: Clone + std::fmt::Debug, A: Dwt0<T>> Dwt1<T> for A {
+    fn dwt1(&self, mut sig: Strided<&mut T>, mut tmp: Strided<&mut T>) {
+        for (src, dst) in sig.iter().zip(tmp.iter_mut()) {
             *dst = src.clone();
         }
-        let (src1, src2) = tmp.deinterleave();
-        let (dst1, dst2) = sig.split_at(sig.len() / 2);
+        let [src1, src2] = tmp.into_deinterleave_array();
+        let (dst1, dst2) = sig.split_at_mut(sig.len() / 2);
 
-        for (a, (b, (l, h))) in src1.zip(src2.zip(dst1.zip(dst2))) {
+        for (a, (b, (l, h))) in src1
+            .into_iter()
+            .zip(src2.into_iter().zip(dst1.into_iter().zip(dst2)))
+        {
             (*l, *h) = self.dwt0(a.clone(), b.clone());
         }
     }
 
-    fn idwt1(
-        &self,
-        mut sig: crate::memory::StridedSliceMut<'_, T>,
-        mut tmp: crate::memory::StridedSliceMut<'_, T>,
-    ) {
-        for (src, dst) in sig.as_strided_slice().zip(tmp.as_strided_slice_mut()) {
+    fn idwt1(&self, sig: Strided<&mut T>, mut tmp: Strided<&mut T>) {
+        for (src, dst) in sig.iter().zip(tmp.iter_mut()) {
             *dst = src.clone();
         }
         let (src1, src2) = tmp.split_at(tmp.len() / 2);
-        let (dst1, dst2) = sig.deinterleave();
+        let [dst1, dst2] = sig.into_deinterleave_array();
 
-        for (l, (h, (a, b))) in src1.zip(src2.zip(dst1.zip(dst2))) {
+        for (l, (h, (a, b))) in src1
+            .into_iter()
+            .zip(src2.into_iter().zip(dst1.into_iter().zip(dst2)))
+        {
             (*a, *b) = self.idwt0(l.clone(), h.clone());
         }
     }

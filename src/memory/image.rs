@@ -1,230 +1,87 @@
 #![allow(clippy::missing_safety_doc)]
 
-use std::{alloc::Layout, marker::PhantomData, mem::MaybeUninit, ptr::NonNull};
+use std::{alloc::Layout, mem::MaybeUninit, ptr::NonNull};
 
 use super::{
-    ptr_offset, slice::SlicePtr, ImageColIter, ImageColIterMut, ImageColIterPtr, ImageRowIter,
-    ImageRowIterMut, ImageRowIterPtr, StridedSlice, StridedSliceMut, StridedSlicePtr,
+    slice::SlicePtr,
+    strided::{self, StridedState},
+    Strided,
 };
 
-pub struct ImageViewPtr<T> {
-    ptr: NonNull<T>,
-    stride: usize,
-    width: usize,
-    height: usize,
-}
+#[derive(Debug, Default, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
+pub struct ImageView<'a, T>(Strided<&'a [T]>);
 
-impl<T> ImageViewPtr<T> {
-    pub fn width(&self) -> usize {
-        self.width
-    }
-    pub fn height(&self) -> usize {
-        self.height
-    }
-    pub fn size(&self) -> usize {
-        self.width() * self.height()
-    }
-    pub fn stride(&self) -> usize {
-        self.stride
-    }
-    pub fn ptr(&self) -> NonNull<T> {
-        self.ptr
-    }
-    pub fn cast<U>(&self) -> ImageViewPtr<U> {
-        ImageViewPtr {
-            ptr: self.ptr().cast(),
-            stride: self.stride(),
-            width: self.width(),
-            height: self.height(),
-        }
-    }
+#[derive(Debug, Default, Eq, PartialEq, PartialOrd, Ord)]
+pub struct ImageViewMut<'a, T>(Strided<&'a mut [T]>);
 
-    pub unsafe fn unchecked_get(&self, x: usize, y: usize) -> NonNull<T> {
-        unsafe { self.unchecked_row(y).unchecked_get(x) }
-    }
-    pub fn checked_get(&self, x: usize, y: usize) -> Option<NonNull<T>> {
-        if x < self.width() && y < self.height() {
-            Some(unsafe { self.unchecked_get(x, y) })
-        } else {
-            None
-        }
-    }
-    pub fn get(&self, x: usize, y: usize) -> NonNull<T> {
-        if x < self.width() && y < self.height() {
-            unsafe { self.unchecked_get(x, y) }
-        } else {
-            panic!(
-                "Cell ({}, {}) is outside of image of size {} x {}",
-                x,
-                y,
-                self.width(),
-                self.height()
-            )
-        }
-    }
-
-    pub unsafe fn unchecked_row(&self, y: usize) -> SlicePtr<T> {
-        unsafe {
-            SlicePtr::from_raw_parts(
-                ptr_offset(self.ptr(), y, self.stride() as isize),
-                self.width(),
-            )
-        }
-    }
-    pub fn checked_row(&self, y: usize) -> Option<SlicePtr<T>> {
-        if y < self.height() {
-            Some(unsafe { self.unchecked_row(y) })
-        } else {
-            None
-        }
-    }
-    pub fn row(&self, y: usize) -> SlicePtr<T> {
-        if y < self.height() {
-            unsafe { self.unchecked_row(y) }
-        } else {
-            panic!(
-                "Trying to access row {y} from an image with height {}",
-                self.height()
-            )
-        }
-    }
-
-    pub unsafe fn unchecked_col(&self, x: usize) -> StridedSlicePtr<T> {
-        unsafe {
-            StridedSlicePtr::from_raw_parts(
-                ptr_offset(self.ptr(), x, std::mem::size_of::<T>() as isize).as_ptr(),
-                self.stride() as isize,
-                self.height(),
-            )
-        }
-    }
-    pub fn checked_col(&self, x: usize) -> Option<StridedSlicePtr<T>> {
-        if x < self.height() {
-            Some(unsafe { self.unchecked_col(x) })
-        } else {
-            None
-        }
-    }
-    pub fn col(&self, x: usize) -> StridedSlicePtr<T> {
-        if x < self.height() {
-            unsafe { self.unchecked_col(x) }
-        } else {
-            panic!(
-                "Trying to access column {x} from an image with width {}",
-                self.height()
-            )
-        }
-    }
-
-    pub fn rows(&self) -> ImageRowIterPtr<T> {
-        ImageRowIterPtr(*self)
-    }
-    pub fn cols(&self) -> ImageColIterPtr<T> {
-        ImageColIterPtr(*self)
-    }
-
-    pub fn subview(&self, x: usize, y: usize, width: usize, height: usize) -> Self {
-        let x = x.min(self.width());
-        let y = y.min(self.height());
-        let width = width.min(self.width().saturating_sub(x));
-        let height = height.min(self.height().saturating_sub(y));
-
-        unsafe {
-            let ptr = self.ptr();
-            let ptr = ptr_offset(ptr, y, self.stride() as isize);
-            let ptr = ptr_offset(ptr, x, std::mem::size_of::<T>() as isize);
-
-            Self {
-                ptr,
-                stride: self.stride(),
-                width,
-                height,
-            }
-        }
-    }
-}
-
-impl<T> Copy for ImageViewPtr<T> {}
-
-impl<T> Clone for ImageViewPtr<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Default for ImageViewPtr<T> {
-    fn default() -> Self {
-        Self {
-            ptr: NonNull::dangling(),
-            stride: Default::default(),
-            width: Default::default(),
-            height: Default::default(),
-        }
-    }
-}
-
-pub struct ImageView<'a, T>(ImageViewPtr<T>, PhantomData<&'a [T]>);
+#[derive(Debug, Default, Eq, PartialEq, PartialOrd, Ord)]
+pub struct Image<T>(Strided<strided::Owned<[T]>>);
 
 impl<'a, T> ImageView<'a, T> {
     pub fn width(&self) -> usize {
-        self.0.width()
+        self.0.state().inner
     }
     pub fn height(&self) -> usize {
-        self.0.height()
+        self.0.len()
     }
     pub fn size(&self) -> usize {
-        self.0.size()
+        self.0.total_size()
     }
     pub fn stride(&self) -> usize {
-        self.0.stride()
+        self.0.stride() as usize
     }
     pub fn ptr(&self) -> NonNull<T> {
-        self.0.ptr()
+        self.0.as_non_null_ptr()
+    }
+    pub unsafe fn cast<U>(&self) -> ImageView<'a, U> {
+        ImageView(unsafe { self.0.cast_as() })
+    }
+
+    pub fn as_matrix(&self) -> Strided<Strided<&'a T>> {
+        self.0.into()
     }
 
     pub unsafe fn unchecked_get(&self, x: usize, y: usize) -> &T {
-        unsafe { self.0.unchecked_get(x, y).as_ref() }
+        unsafe { self.0.unchecked_get(y).get_unchecked(x) }
     }
     pub fn checked_get(&self, x: usize, y: usize) -> Option<&T> {
-        self.0.checked_get(x, y).map(|ptr| unsafe { ptr.as_ref() })
+        self.0.checked_get(y).and_then(|row| row.get(x))
     }
     pub fn get(&self, x: usize, y: usize) -> &T {
-        unsafe { self.0.get(x, y).as_ref() }
+        &self.0.get(y)[x]
     }
 
     pub unsafe fn unchecked_row(&self, y: usize) -> &[T] {
-        unsafe { self.0.unchecked_row(y).as_ref() }
+        unsafe { self.0.unchecked_get(y) }
     }
     pub fn checked_row(&self, y: usize) -> Option<&[T]> {
-        self.0.checked_row(y).map(|ptr| unsafe { ptr.as_ref() })
+        self.0.checked_get(y)
     }
     pub fn row(&self, y: usize) -> &[T] {
-        unsafe { self.0.row(y).as_ref() }
+        self.0.get(y)
     }
 
-    pub unsafe fn unchecked_col(&self, x: usize) -> StridedSlice<'_, T> {
-        unsafe { self.0.unchecked_col(x).as_strided_slice() }
+    pub unsafe fn unchecked_col(&self, x: usize) -> Strided<&T> {
+        unsafe { self.as_matrix().into_transpose01().unchecked_into_get(x) }
     }
-    pub fn checked_col(&self, x: usize) -> Option<StridedSlice<'_, T>> {
-        self.0
-            .checked_col(x)
-            .map(|ptr| unsafe { ptr.as_strided_slice() })
+    pub fn checked_col(&self, x: usize) -> Option<Strided<&T>> {
+        self.as_matrix().into_transpose01().checked_into_get(x)
     }
-    pub fn col(&self, x: usize) -> StridedSlice<'_, T> {
-        unsafe { self.0.col(x).as_strided_slice() }
+    pub fn col(&self, x: usize) -> Strided<&'_ T> {
+        self.as_matrix().into_transpose01().into_get(x)
     }
 
-    pub fn into_rows(self) -> ImageRowIter<'a, T> {
-        ImageRowIter(self.0.rows(), PhantomData)
+    pub fn into_rows(self) -> strided::Iter<&'a [T]> {
+        self.0.into_iter()
     }
-    pub fn into_cols(self) -> ImageColIter<'a, T> {
-        ImageColIter(self.0.cols(), PhantomData)
+    pub fn into_cols(self) -> strided::Iter<Strided<&'a T>> {
+        self.as_matrix().into_transpose01().into_iter()
     }
-    pub fn rows(&self) -> ImageRowIter<'_, T> {
-        ImageRowIter(self.0.rows(), PhantomData)
+    pub fn rows(&self) -> strided::Iter<&'_ [T]> {
+        self.0.iter()
     }
-    pub fn cols(&self) -> ImageColIter<'_, T> {
-        ImageColIter(self.0.cols(), PhantomData)
+    pub fn cols(&self) -> strided::Iter<Strided<&'_ T>> {
+        self.as_matrix().into_transpose01().into_iter()
     }
 
     pub fn for_each(&self, mut f: impl FnMut(usize, usize, &T)) {
@@ -236,146 +93,145 @@ impl<'a, T> ImageView<'a, T> {
     }
 
     pub fn view(&self) -> ImageView<'_, T> {
-        ImageView(self.0, PhantomData)
+        ImageView(self.0)
     }
+
     pub fn into_subview(self, x: usize, y: usize, width: usize, height: usize) -> Self {
-        ImageView(self.0.subview(x, y, width, height), PhantomData)
+        let mut matrix = self.as_matrix();
+        matrix = matrix.into_partial(x, height, strided::STEP_1);
+        matrix.transpose01();
+        matrix = matrix.into_partial(y, width, strided::STEP_1);
+        matrix.transpose01();
+
+        Self(unsafe { matrix.try_into().unwrap_unchecked() })
     }
+
     pub fn subview(&self, x: usize, y: usize, width: usize, height: usize) -> ImageView<'_, T> {
-        ImageView(self.0.subview(x, y, width, height), PhantomData)
+        self.view().into_subview(x, y, width, height)
     }
 }
-
-unsafe impl<T: Sync> Send for ImageView<'_, T> {}
-unsafe impl<T: Sync> Sync for ImageView<'_, T> {}
-
-impl<T> Default for ImageView<'_, T> {
-    fn default() -> Self {
-        ImageView(ImageViewPtr::default(), PhantomData)
-    }
-}
-impl<T> Copy for ImageView<'_, T> {}
-impl<T> Clone for ImageView<'_, T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<'a, T> From<ImageViewMut<'a, T>> for ImageView<'a, T> {
-    fn from(value: ImageViewMut<'a, T>) -> Self {
-        Self(value.0, PhantomData)
-    }
-}
-
-pub struct ImageViewMut<'a, T>(ImageViewPtr<T>, PhantomData<&'a mut [T]>);
 
 impl<'a, T> ImageViewMut<'a, T> {
     pub fn width(&self) -> usize {
-        self.0.width()
+        self.0.state().inner
     }
     pub fn height(&self) -> usize {
-        self.0.height()
+        self.0.len()
     }
     pub fn size(&self) -> usize {
-        self.0.size()
+        self.0.total_size()
     }
     pub fn stride(&self) -> usize {
-        self.0.stride()
+        self.0.stride() as usize
     }
     pub fn ptr(&self) -> NonNull<T> {
-        self.0.ptr()
+        self.0.as_non_null_ptr()
+    }
+    pub unsafe fn cast<U>(&self) -> ImageViewMut<'a, U> {
+        ImageViewMut(unsafe { self.0.cast_as() })
+    }
+
+    pub fn as_matrix(&self) -> Strided<Strided<&'_ T>> {
+        self.0.borrow().into()
+    }
+    pub fn as_matrix_mut(&mut self) -> Strided<Strided<&'_ mut T>> {
+        self.0.borrow_mut().into()
+    }
+    pub fn into_matrix_mut(self) -> Strided<Strided<&'a mut T>> {
+        self.0.into()
     }
 
     pub unsafe fn unchecked_get(&self, x: usize, y: usize) -> &T {
-        unsafe { self.0.unchecked_get(x, y).as_ref() }
+        unsafe { self.0.unchecked_get(y).get_unchecked(x) }
     }
     pub fn checked_get(&self, x: usize, y: usize) -> Option<&T> {
-        self.0.checked_get(x, y).map(|ptr| unsafe { ptr.as_ref() })
+        self.0.checked_get(y).and_then(|row| row.get(x))
     }
     pub fn get(&self, x: usize, y: usize) -> &T {
-        unsafe { self.0.get(x, y).as_ref() }
+        &self.0.get(y)[x]
     }
 
     pub unsafe fn unchecked_get_mut(&mut self, x: usize, y: usize) -> &mut T {
-        unsafe { self.0.unchecked_get(x, y).as_mut() }
+        unsafe { self.0.unchecked_get_mut(y).get_unchecked_mut(x) }
     }
     pub fn checked_get_mut(&mut self, x: usize, y: usize) -> Option<&mut T> {
-        self.0
-            .checked_get(x, y)
-            .map(|mut ptr| unsafe { ptr.as_mut() })
+        self.0.checked_get_mut(y).and_then(|row| row.get_mut(x))
     }
     pub fn get_mut(&mut self, x: usize, y: usize) -> &mut T {
-        unsafe { self.0.get(x, y).as_mut() }
+        &mut self.0.get_mut(y)[x]
     }
 
     pub unsafe fn unchecked_row(&self, y: usize) -> &[T] {
-        unsafe { self.0.unchecked_row(y).as_ref() }
+        unsafe { self.0.unchecked_get(y) }
     }
     pub fn checked_row(&self, y: usize) -> Option<&[T]> {
-        self.0.checked_row(y).map(|ptr| unsafe { ptr.as_ref() })
+        self.0.checked_get(y)
     }
     pub fn row(&self, y: usize) -> &[T] {
-        unsafe { self.0.row(y).as_ref() }
+        self.0.get(y)
     }
 
     pub unsafe fn unchecked_row_mut(&mut self, y: usize) -> &mut [T] {
-        unsafe { self.0.unchecked_row(y).as_mut() }
+        unsafe { self.0.unchecked_get_mut(y) }
     }
     pub fn checked_row_mut(&mut self, y: usize) -> Option<&mut [T]> {
-        self.0.checked_row(y).map(|mut ptr| unsafe { ptr.as_mut() })
+        self.0.checked_get_mut(y)
     }
     pub fn row_mut(&mut self, y: usize) -> &mut [T] {
-        unsafe { self.0.row(y).as_mut() }
+        self.0.get_mut(y)
     }
 
-    pub unsafe fn unchecked_col(&self, x: usize) -> StridedSlice<'_, T> {
-        unsafe { self.0.unchecked_col(x).as_strided_slice() }
+    pub unsafe fn unchecked_col(&self, x: usize) -> Strided<&T> {
+        unsafe { self.as_matrix().into_transpose01().unchecked_into_get(x) }
     }
-    pub fn checked_col(&self, x: usize) -> Option<StridedSlice<'_, T>> {
-        self.0
-            .checked_col(x)
-            .map(|ptr| unsafe { ptr.as_strided_slice() })
+    pub fn checked_col(&self, x: usize) -> Option<Strided<&T>> {
+        self.as_matrix().into_transpose01().checked_into_get(x)
     }
-    pub fn col(&self, x: usize) -> StridedSlice<'_, T> {
-        unsafe { self.0.col(x).as_strided_slice() }
+    pub fn col(&self, x: usize) -> Strided<&'_ T> {
+        self.as_matrix().into_transpose01().into_get(x)
     }
 
-    pub unsafe fn unchecked_col_mut(&mut self, x: usize) -> StridedSliceMut<'_, T> {
-        unsafe { self.0.unchecked_col(x).as_strided_slice_mut() }
+    pub unsafe fn unchecked_col_mut(&mut self, x: usize) -> Strided<&mut T> {
+        unsafe {
+            self.as_matrix_mut()
+                .into_transpose01()
+                .unchecked_into_get(x)
+        }
     }
-    pub fn checked_col_mut(&mut self, x: usize) -> Option<StridedSliceMut<'_, T>> {
-        self.0
-            .checked_col(x)
-            .map(|ptr| unsafe { ptr.as_strided_slice_mut() })
+    pub fn checked_col_mut(&mut self, x: usize) -> Option<Strided<&mut T>> {
+        self.as_matrix_mut().into_transpose01().checked_into_get(x)
     }
-    pub fn col_mut(&mut self, x: usize) -> StridedSliceMut<'_, T> {
-        unsafe { self.0.col(x).as_strided_slice_mut() }
-    }
-
-    pub fn into_rows(self) -> ImageRowIter<'a, T> {
-        ImageRowIter(self.0.rows(), PhantomData)
-    }
-    pub fn into_cols(self) -> ImageColIter<'a, T> {
-        ImageColIter(self.0.cols(), PhantomData)
-    }
-    pub fn rows(&self) -> ImageRowIter<'_, T> {
-        ImageRowIter(self.0.rows(), PhantomData)
-    }
-    pub fn cols(&self) -> ImageColIter<'_, T> {
-        ImageColIter(self.0.cols(), PhantomData)
+    pub fn col_mut(&mut self, x: usize) -> Strided<&'_ mut T> {
+        self.as_matrix_mut().into_transpose01().into_get(x)
     }
 
-    pub fn into_rows_mut(self) -> ImageRowIterMut<'a, T> {
-        ImageRowIterMut(self.0.rows(), PhantomData)
+    pub fn into_rows(self) -> strided::Iter<&'a [T]> {
+        self.0.into_borrow().into_iter()
     }
-    pub fn into_cols_mut(self) -> ImageColIterMut<'a, T> {
-        ImageColIterMut(self.0.cols(), PhantomData)
+    pub fn into_cols(self) -> strided::Iter<Strided<&'a T>> {
+        self.into_matrix_mut()
+            .into_borrow()
+            .into_transpose01()
+            .into_iter()
     }
-    pub fn rows_mut(&mut self) -> ImageRowIterMut<'_, T> {
-        ImageRowIterMut(self.0.rows(), PhantomData)
+    pub fn rows(&self) -> strided::Iter<&'_ [T]> {
+        self.0.iter()
     }
-    pub fn cols_mut(&mut self) -> ImageColIterMut<'_, T> {
-        ImageColIterMut(self.0.cols(), PhantomData)
+    pub fn cols(&self) -> strided::Iter<Strided<&'_ T>> {
+        self.as_matrix().into_transpose01().into_iter()
+    }
+
+    pub fn into_rows_mut(self) -> strided::Iter<&'a mut [T]> {
+        self.0.into_iter()
+    }
+    pub fn into_cols_mut(self) -> strided::Iter<Strided<&'a mut T>> {
+        self.into_matrix_mut().into_transpose01().into_iter()
+    }
+    pub fn rows_mut(&mut self) -> strided::Iter<&'_ mut [T]> {
+        self.0.iter_mut()
+    }
+    pub fn cols_mut(&mut self) -> strided::Iter<Strided<&'_ mut T>> {
+        self.as_matrix_mut().into_transpose01().into_iter()
     }
 
     pub fn for_each(&self, mut f: impl FnMut(usize, usize, &T)) {
@@ -385,6 +241,7 @@ impl<'a, T> ImageViewMut<'a, T> {
             }
         }
     }
+
     pub fn for_each_mut(&mut self, mut f: impl FnMut(usize, usize, &mut T)) {
         for (y, row) in self.rows_mut().enumerate() {
             for (x, cell) in row.iter_mut().enumerate() {
@@ -394,26 +251,20 @@ impl<'a, T> ImageViewMut<'a, T> {
     }
 
     pub fn view(&self) -> ImageView<'_, T> {
-        ImageView(self.0, PhantomData)
+        ImageView(self.0.borrow())
     }
-    pub fn into_subview(self, x: usize, y: usize, width: usize, height: usize) -> ImageView<'a, T> {
-        ImageView(self.0.subview(x, y, width, height), PhantomData)
-    }
-    pub fn subview(&self, x: usize, y: usize, width: usize, height: usize) -> ImageView<'_, T> {
-        ImageView(self.0.subview(x, y, width, height), PhantomData)
+    pub fn view_mut(&mut self) -> ImageViewMut<'_, T> {
+        ImageViewMut(self.0.borrow_mut())
     }
 
-    pub fn view_mut(&mut self) -> ImageViewMut<'_, T> {
-        ImageViewMut(self.0, PhantomData)
-    }
-    pub fn into_subview_mut(
-        self,
-        x: usize,
-        y: usize,
-        width: usize,
-        height: usize,
-    ) -> ImageViewMut<'a, T> {
-        ImageViewMut(self.0.subview(x, y, width, height), PhantomData)
+    pub fn into_subview_mut(self, x: usize, y: usize, width: usize, height: usize) -> Self {
+        let mut matrix = self.into_matrix_mut();
+        matrix = matrix.into_partial(x, height, strided::STEP_1);
+        matrix.transpose01();
+        matrix = matrix.into_partial(y, width, strided::STEP_1);
+        matrix.transpose01();
+
+        Self(unsafe { matrix.try_into().unwrap_unchecked() })
     }
     pub fn subview_mut(
         &mut self,
@@ -422,20 +273,17 @@ impl<'a, T> ImageViewMut<'a, T> {
         width: usize,
         height: usize,
     ) -> ImageViewMut<'_, T> {
-        ImageViewMut(self.0.subview(x, y, width, height), PhantomData)
+        self.view_mut().into_subview_mut(x, y, width, height)
+    }
+
+    pub fn into_subview(self, x: usize, y: usize, width: usize, height: usize) -> ImageView<'a, T> {
+        ImageView(self.0.into_borrow()).into_subview(x, y, width, height)
+    }
+
+    pub fn subview(&self, x: usize, y: usize, width: usize, height: usize) -> ImageView<'_, T> {
+        self.view().into_subview(x, y, width, height)
     }
 }
-
-unsafe impl<T: Sync> Send for ImageViewMut<'_, T> {}
-unsafe impl<T: Sync> Sync for ImageViewMut<'_, T> {}
-
-impl<T> Default for ImageViewMut<'_, T> {
-    fn default() -> Self {
-        Self(ImageViewPtr::default(), PhantomData)
-    }
-}
-
-pub struct Image<T>(ImageViewPtr<T>, PhantomData<Box<[T]>>);
 
 impl<T> Image<T> {
     fn new_uninit_or_zeroed(
@@ -473,15 +321,14 @@ impl<T> Image<T> {
                 NonNull::new_unchecked(ptr)
             };
 
-            Image(
-                ImageViewPtr {
-                    ptr,
-                    stride,
-                    width,
-                    height,
+            Image(Strided::from_raw_parts(
+                ptr.cast(),
+                StridedState {
+                    len: height,
+                    stride: stride as isize,
+                    inner: width,
                 },
-                PhantomData,
-            )
+            ))
         }
     }
 
@@ -540,99 +387,111 @@ impl<T> Image<T> {
     }
 
     pub fn width(&self) -> usize {
-        self.0.width()
+        self.0.state().inner
     }
     pub fn height(&self) -> usize {
-        self.0.height()
+        self.0.len()
     }
     pub fn size(&self) -> usize {
-        self.0.size()
+        self.0.total_size()
     }
     pub fn stride(&self) -> usize {
-        self.0.stride()
+        self.0.stride() as usize
     }
     pub fn ptr(&self) -> NonNull<T> {
-        self.0.ptr()
+        self.0.as_non_null_ptr()
+    }
+    pub unsafe fn cast<U>(self) -> Image<U> {
+        unsafe {
+            let casted = self.0.cast_as();
+            std::mem::forget(self);
+            Image(casted)
+        }
+    }
+
+    pub fn as_matrix(&self) -> Strided<Strided<&'_ T>> {
+        self.0.borrow().into()
+    }
+    pub fn as_matrix_mut(&mut self) -> Strided<Strided<&'_ mut T>> {
+        self.0.borrow_mut().into()
     }
 
     pub unsafe fn unchecked_get(&self, x: usize, y: usize) -> &T {
-        unsafe { self.0.unchecked_get(x, y).as_ref() }
+        unsafe { self.0.unchecked_get(y).get_unchecked(x) }
     }
     pub fn checked_get(&self, x: usize, y: usize) -> Option<&T> {
-        self.0.checked_get(x, y).map(|ptr| unsafe { ptr.as_ref() })
+        self.0.checked_get(y).and_then(|row| row.get(x))
     }
     pub fn get(&self, x: usize, y: usize) -> &T {
-        unsafe { self.0.get(x, y).as_ref() }
+        &self.0.get(y)[x]
     }
 
     pub unsafe fn unchecked_get_mut(&mut self, x: usize, y: usize) -> &mut T {
-        unsafe { self.0.unchecked_get(x, y).as_mut() }
+        unsafe { self.0.unchecked_get_mut(y).get_unchecked_mut(x) }
     }
     pub fn checked_get_mut(&mut self, x: usize, y: usize) -> Option<&mut T> {
-        self.0
-            .checked_get(x, y)
-            .map(|mut ptr| unsafe { ptr.as_mut() })
+        self.0.checked_get_mut(y).and_then(|row| row.get_mut(x))
     }
     pub fn get_mut(&mut self, x: usize, y: usize) -> &mut T {
-        unsafe { self.0.get(x, y).as_mut() }
+        &mut self.0.get_mut(y)[x]
     }
 
     pub unsafe fn unchecked_row(&self, y: usize) -> &[T] {
-        unsafe { self.0.unchecked_row(y).as_ref() }
+        unsafe { self.0.unchecked_get(y) }
     }
     pub fn checked_row(&self, y: usize) -> Option<&[T]> {
-        self.0.checked_row(y).map(|ptr| unsafe { ptr.as_ref() })
+        self.0.checked_get(y)
     }
     pub fn row(&self, y: usize) -> &[T] {
-        unsafe { self.0.row(y).as_ref() }
+        self.0.get(y)
     }
 
     pub unsafe fn unchecked_row_mut(&mut self, y: usize) -> &mut [T] {
-        unsafe { self.0.unchecked_row(y).as_mut() }
+        unsafe { self.0.unchecked_get_mut(y) }
     }
     pub fn checked_row_mut(&mut self, y: usize) -> Option<&mut [T]> {
-        self.0.checked_row(y).map(|mut ptr| unsafe { ptr.as_mut() })
+        self.0.checked_get_mut(y)
     }
     pub fn row_mut(&mut self, y: usize) -> &mut [T] {
-        unsafe { self.0.row(y).as_mut() }
+        self.0.get_mut(y)
     }
 
-    pub unsafe fn unchecked_col(&self, x: usize) -> StridedSlice<'_, T> {
-        unsafe { self.0.unchecked_col(x).as_strided_slice() }
+    pub unsafe fn unchecked_col(&self, x: usize) -> Strided<&T> {
+        unsafe { self.as_matrix().into_transpose01().unchecked_into_get(x) }
     }
-    pub fn checked_col(&self, x: usize) -> Option<StridedSlice<'_, T>> {
-        self.0
-            .checked_col(x)
-            .map(|ptr| unsafe { ptr.as_strided_slice() })
+    pub fn checked_col(&self, x: usize) -> Option<Strided<&T>> {
+        self.as_matrix().into_transpose01().checked_into_get(x)
     }
-    pub fn col(&self, x: usize) -> StridedSlice<'_, T> {
-        unsafe { self.0.col(x).as_strided_slice() }
+    pub fn col(&self, x: usize) -> Strided<&'_ T> {
+        self.as_matrix().into_transpose01().into_get(x)
     }
 
-    pub unsafe fn unchecked_col_mut(&mut self, x: usize) -> StridedSliceMut<'_, T> {
-        unsafe { self.0.unchecked_col(x).as_strided_slice_mut() }
+    pub unsafe fn unchecked_col_mut(&mut self, x: usize) -> Strided<&mut T> {
+        unsafe {
+            self.as_matrix_mut()
+                .into_transpose01()
+                .unchecked_into_get(x)
+        }
     }
-    pub fn checked_col_mut(&mut self, x: usize) -> Option<StridedSliceMut<'_, T>> {
-        self.0
-            .checked_col(x)
-            .map(|ptr| unsafe { ptr.as_strided_slice_mut() })
+    pub fn checked_col_mut(&mut self, x: usize) -> Option<Strided<&mut T>> {
+        self.as_matrix_mut().into_transpose01().checked_into_get(x)
     }
-    pub fn col_mut(&mut self, x: usize) -> StridedSliceMut<'_, T> {
-        unsafe { self.0.col(x).as_strided_slice_mut() }
-    }
-
-    pub fn rows(&self) -> ImageRowIter<'_, T> {
-        ImageRowIter(self.0.rows(), PhantomData)
-    }
-    pub fn cols(&self) -> ImageColIter<'_, T> {
-        ImageColIter(self.0.cols(), PhantomData)
+    pub fn col_mut(&mut self, x: usize) -> Strided<&'_ mut T> {
+        self.as_matrix_mut().into_transpose01().into_get(x)
     }
 
-    pub fn rows_mut(&mut self) -> ImageRowIterMut<'_, T> {
-        ImageRowIterMut(self.0.rows(), PhantomData)
+    pub fn rows(&self) -> strided::Iter<&'_ [T]> {
+        self.0.iter()
     }
-    pub fn cols_mut(&mut self) -> ImageColIterMut<'_, T> {
-        ImageColIterMut(self.0.cols(), PhantomData)
+    pub fn cols(&self) -> strided::Iter<Strided<&'_ T>> {
+        self.as_matrix().into_transpose01().into_iter()
+    }
+
+    pub fn rows_mut(&mut self) -> strided::Iter<&'_ mut [T]> {
+        self.0.iter_mut()
+    }
+    pub fn cols_mut(&mut self) -> strided::Iter<Strided<&'_ mut T>> {
+        self.as_matrix_mut().into_transpose01().into_iter()
     }
 
     pub fn for_each(&self, mut f: impl FnMut(usize, usize, &T)) {
@@ -642,6 +501,7 @@ impl<T> Image<T> {
             }
         }
     }
+
     pub fn for_each_mut(&mut self, mut f: impl FnMut(usize, usize, &mut T)) {
         for (y, row) in self.rows_mut().enumerate() {
             for (x, cell) in row.iter_mut().enumerate() {
@@ -651,15 +511,12 @@ impl<T> Image<T> {
     }
 
     pub fn view(&self) -> ImageView<'_, T> {
-        ImageView(self.0, PhantomData)
+        ImageView(self.0.borrow())
     }
-    pub fn subview(&self, x: usize, y: usize, width: usize, height: usize) -> ImageView<'_, T> {
-        ImageView(self.0.subview(x, y, width, height), PhantomData)
+    pub fn view_mut(&mut self) -> ImageViewMut<'_, T> {
+        ImageViewMut(self.0.borrow_mut())
     }
 
-    pub fn view_mut(&mut self) -> ImageViewMut<'_, T> {
-        ImageViewMut(self.0, PhantomData)
-    }
     pub fn subview_mut(
         &mut self,
         x: usize,
@@ -667,23 +524,25 @@ impl<T> Image<T> {
         width: usize,
         height: usize,
     ) -> ImageViewMut<'_, T> {
-        ImageViewMut(self.0.subview(x, y, width, height), PhantomData)
+        self.view_mut().into_subview_mut(x, y, width, height)
+    }
+
+    pub fn subview(&self, x: usize, y: usize, width: usize, height: usize) -> ImageView<'_, T> {
+        self.view().into_subview(x, y, width, height)
     }
 }
 
 impl<T> Image<MaybeUninit<T>> {
     pub unsafe fn assume_init(self) -> Image<T> {
-        let image = Image(self.0.cast(), PhantomData);
-        std::mem::forget(self);
-        image
+        unsafe { self.cast() }
     }
 }
 
 impl<T> Drop for Image<T> {
     fn drop(&mut self) {
         unsafe {
-            for row in self.0.rows() {
-                for cell in row {
+            for row in self.0.cast_as::<NonNull<[T]>>() {
+                for cell in SlicePtr::<T>::from(row) {
                     cell.drop_in_place();
                 }
             }
@@ -701,12 +560,6 @@ impl<T> Drop for Image<T> {
 
 unsafe impl<T: Sync> Send for Image<T> {}
 unsafe impl<T: Sync> Sync for Image<T> {}
-
-impl<T> Default for Image<T> {
-    fn default() -> Self {
-        Self(ImageViewPtr::default(), PhantomData)
-    }
-}
 
 impl<T: Clone> Clone for Image<T> {
     fn clone(&self) -> Self {
