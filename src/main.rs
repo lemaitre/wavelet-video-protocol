@@ -11,9 +11,9 @@ pub mod dwt;
 pub mod io;
 pub mod memory;
 
-fn print_minmax(image: ImageView<'_, u8>, name: &str) {
-    let mut min = u8::MAX;
-    let mut max = u8::MIN;
+fn print_minmax(image: ImageView<'_, i8>, name: &str) {
+    let mut min = i8::MAX;
+    let mut max = i8::MIN;
     for row in image.into_rows() {
         for &cell in row {
             min = min.min(cell);
@@ -24,29 +24,30 @@ fn print_minmax(image: ImageView<'_, u8>, name: &str) {
     println!("{name}: [{min}; {max}]");
 }
 
-fn image_upcast(src: ImageView<'_, u8>, mut dst: ImageViewMut<'_, u8>) {
+fn image_upcast(src: ImageView<'_, u8>, mut dst: ImageViewMut<'_, i8>) {
     for (src, dst) in src.rows().zip(dst.rows_mut()) {
         for (&src, dst) in src.iter().zip(dst) {
-            // *dst = src.wrapping_sub(128) as i8 as i16;
-            *dst = src;
+            *dst = src.wrapping_sub(128) as i8;
+            // *dst = src;
         }
     }
 }
 
-fn image_downcast(src: ImageView<'_, u8>, mut dst: ImageViewMut<'_, u8>) {
+fn image_downcast(src: ImageView<'_, i8>, mut dst: ImageViewMut<'_, u8>) {
     for (src, dst) in src.rows().zip(dst.rows_mut()) {
         for (&src, dst) in src.iter().zip(dst) {
+            *dst = (src as u8).wrapping_add(128);
             // *dst = (src.clamp(0, 255) as i8 as u8).wrapping_add(128);
-            *dst = src;
+            // *dst = src;
         }
     }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    const N: usize = 1;
+    const N: usize = 4;
     const LOW_BAND_ONLY: bool = false;
 
-    let input8 = io::load_pgm("input-small.pgm")?;
+    let input8 = io::load_pgm("input.pgm")?;
     let mut output8 = input8.clone();
     let mut reconstructed8 = input8.clone();
     let mut input = Image::with_stride(input8.width(), input8.height(), input8.stride());

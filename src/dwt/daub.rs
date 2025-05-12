@@ -2,11 +2,11 @@ use super::Dwt1;
 
 pub struct Daub53;
 
-impl Dwt1<u8> for Daub53 {
+impl Dwt1<i8> for Daub53 {
     fn dwt1(
         &self,
-        mut sig: crate::memory::Strided<&mut u8>,
-        mut tmp: crate::memory::Strided<&mut u8>,
+        mut sig: crate::memory::Strided<&mut i8>,
+        mut tmp: crate::memory::Strided<&mut i8>,
     ) {
         for (&src, dst) in sig.iter().zip(tmp.iter_mut()) {
             *dst = src;
@@ -21,18 +21,16 @@ impl Dwt1<u8> for Daub53 {
             .enumerate()
         {
             let c = tmp.checked_get(2 * i + 2).copied().unwrap_or(a);
-            *h = b.wrapping_sub(a.midpoint(c));
-            *l = a.wrapping_add_signed(((h0 + *h as i8 as i16) / 4) as i8);
-            h0 = *h as i8 as i16;
-
-            *h = h.wrapping_add(128);
+            *h = b.wrapping_sub(((a as i16 + c as i16) / 2) as i8);
+            *l = a.wrapping_add(((h0 + *h as i16) / 4) as i8);
+            h0 = *h as i16;
         }
     }
 
     fn idwt1(
         &self,
-        sig: crate::memory::Strided<&mut u8>,
-        mut tmp: crate::memory::Strided<&mut u8>,
+        sig: crate::memory::Strided<&mut i8>,
+        mut tmp: crate::memory::Strided<&mut i8>,
     ) {
         for (&src, dst) in sig.iter().zip(tmp.iter_mut()) {
             *dst = src;
@@ -50,11 +48,9 @@ impl Dwt1<u8> for Daub53 {
             let h0 = src2
                 .checked_get(i.wrapping_sub(1))
                 .copied()
-                .map(|h| h.wrapping_add(128))
                 .unwrap_or_default();
-            let h = h.wrapping_add(128);
-            let a = l.wrapping_add_signed(-((h0 as i8 as i16 + h as i8 as i16) / 4) as i8);
-            let b = h.wrapping_add(a.midpoint(c.unwrap_or(a)));
+            let a = l.wrapping_sub(((h0 as i16 + h as i16) / 4) as i8);
+            let b = h.wrapping_add(((a as i16 + c.unwrap_or(a) as i16) / 2) as i8);
             c = Some(a);
 
             *dst1 = a;
@@ -165,11 +161,11 @@ fn decode(x: i16) -> i16 {
     // }
 }
 
-impl Dwt1<u8> for LossyDaub53 {
+impl Dwt1<i8> for LossyDaub53 {
     fn dwt1(
         &self,
-        mut sig: crate::memory::Strided<&mut u8>,
-        mut tmp: crate::memory::Strided<&mut u8>,
+        mut sig: crate::memory::Strided<&mut i8>,
+        mut tmp: crate::memory::Strided<&mut i8>,
     ) {
         for (&src, dst) in sig.iter().zip(tmp.iter_mut()) {
             *dst = src;
@@ -193,18 +189,18 @@ impl Dwt1<u8> for LossyDaub53 {
             h0 = h;
 
             let h = encode(h);
-            let h = h.clamp(-128, 127) as i8 as u8;
-            let l = l.clamp(0, 255) as u8;
+            let h = h.clamp(-128, 127) as i8;
+            let l = l.clamp(-128, 127) as i8;
 
             *dst1 = l;
-            *dst2 = h.wrapping_add(128);
+            *dst2 = h;
         }
     }
 
     fn idwt1(
         &self,
-        sig: crate::memory::Strided<&mut u8>,
-        mut tmp: crate::memory::Strided<&mut u8>,
+        sig: crate::memory::Strided<&mut i8>,
+        mut tmp: crate::memory::Strided<&mut i8>,
     ) {
         for (&src, dst) in sig.iter().zip(tmp.iter_mut()) {
             *dst = src;
@@ -222,12 +218,10 @@ impl Dwt1<u8> for LossyDaub53 {
             let h0 = src2
                 .checked_get(i.wrapping_sub(1))
                 .copied()
-                .map(|h| h.wrapping_add(128))
                 .unwrap_or_default();
-            let h = h.wrapping_add(128);
             let l = l as i16;
-            let h = h as i8 as i16;
-            let h0 = h0 as i8 as i16;
+            let h = h as i16;
+            let h0 = h0 as i16;
 
             let h = decode(h);
             let h0 = decode(h0);
@@ -236,8 +230,8 @@ impl Dwt1<u8> for LossyDaub53 {
             let b = h + (a + c.unwrap_or(a)) / 2;
             c = Some(a);
 
-            let a = a.clamp(0, 256) as u8;
-            let b = b.clamp(0, 256) as u8;
+            let a = a.clamp(-128, 127) as i8;
+            let b = b.clamp(-128, 127) as i8;
             *dst1 = a;
             *dst2 = b;
         }
