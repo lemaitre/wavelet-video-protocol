@@ -1,8 +1,16 @@
 {
   "cSpell.words": [
+    "Calderbank",
     "deinterleave",
+    "idwt",
+    "minmax",
+    "MIRI",
+    "nums",
     "Pointee",
+    "rchunk",
     "rchunks",
-    "Strided"
+    "Strided",
+    "subview",
+    "uninit"
   ]
 }
