@@ -6,10 +6,12 @@ use dwt::{
     Dwt2,
 };
 use memory::{Image, ImageView, ImageViewMut};
+use numeric::Convert;
 
 pub mod dwt;
 pub mod io;
 pub mod memory;
+pub mod numeric;
 
 fn print_minmax(image: ImageView<'_, i8>, name: &str) {
     let mut min = i8::MAX;
