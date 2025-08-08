@@ -59,6 +59,60 @@ impl Dwt1<i8> for Daub53 {
     }
 }
 
+impl Dwt1<i16> for Daub53 {
+    fn dwt1(
+        &self,
+        mut sig: crate::memory::Strided<&mut i16>,
+        mut tmp: crate::memory::Strided<&mut i16>,
+    ) {
+        for (&src, dst) in sig.iter().zip(tmp.iter_mut()) {
+            *dst = src;
+        }
+        let [src1, src2] = tmp.deinterleave_array();
+        let (dst1, dst2) = sig.split_at_mut(sig.len() / 2);
+
+        let mut h0 = 0i16;
+        for (i, (&a, (&b, (l, h)))) in src1
+            .into_iter()
+            .zip(src2.into_iter().zip(dst1.into_iter().zip(dst2)))
+            .enumerate()
+        {
+            let c = tmp.checked_get(2 * i + 2).copied().unwrap_or(a);
+            *h = b.wrapping_sub((a + c) / 2);
+            *l = a.wrapping_add((h0 + *h) / 4);
+            h0 = *h;
+        }
+    }
+
+    fn idwt1(
+        &self,
+        sig: crate::memory::Strided<&mut i16>,
+        mut tmp: crate::memory::Strided<&mut i16>,
+    ) {
+        for (&src, dst) in sig.iter().zip(tmp.iter_mut()) {
+            *dst = src;
+        }
+        let (src1, src2) = tmp.split_at(tmp.len() / 2);
+        let [dst1, dst2] = sig.into_deinterleave_array();
+
+        let mut c = None;
+        for (i, (&l, (&h, (dst1, dst2)))) in src1
+            .into_iter()
+            .zip(src2.into_iter().zip(dst1.into_iter().zip(dst2)))
+            .enumerate()
+            .rev()
+        {
+            let h0 = src2.checked_get(i - 1).copied().unwrap_or_default();
+            let a = l - (h0 + h) / 4;
+            let b = h + (a + c.unwrap_or(a)) / 2;
+            c = Some(a);
+
+            *dst1 = a;
+            *dst2 = b;
+        }
+    }
+}
+
 pub struct LossyDaub53;
 
 fn scale_down(x: i16, t: i16, n: i16) -> i16 {
