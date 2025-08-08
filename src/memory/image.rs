@@ -286,58 +286,6 @@ impl<'a, T> ImageViewMut<'a, T> {
 }
 
 impl<T> Image<T> {
-    fn new_uninit_or_zeroed(
-        width: usize,
-        height: usize,
-        stride: usize,
-        zeroed: bool,
-    ) -> Image<MaybeUninit<T>> {
-        let size = stride * height;
-        let align = std::mem::align_of::<T>();
-        if stride % align != 0 {
-            panic!("Stride {stride} is invalid for alignment {align}");
-        }
-        if stride < width * std::mem::size_of::<T>() {
-            panic!(
-                "Stride {stride} is less than width {width} * {}",
-                std::mem::size_of::<T>()
-            );
-        }
-        unsafe {
-            let ptr = if size == 0 {
-                NonNull::dangling()
-            } else {
-                let layout = Layout::from_size_align_unchecked(size, align);
-                let ptr = if zeroed {
-                    std::alloc::alloc(layout)
-                } else {
-                    std::alloc::alloc_zeroed(layout)
-                } as *mut MaybeUninit<T>;
-
-                if ptr.is_null() {
-                    std::alloc::handle_alloc_error(layout);
-                }
-
-                NonNull::new_unchecked(ptr)
-            };
-
-            Image(Strided::from_raw_parts(
-                ptr.cast(),
-                StridedState {
-                    len: height,
-                    stride: stride as isize,
-                    inner: width,
-                },
-            ))
-        }
-    }
-
-    pub fn new_uninit(width: usize, height: usize, stride: usize) -> Image<MaybeUninit<T>> {
-        Self::new_uninit_or_zeroed(width, height, stride, false)
-    }
-    pub fn new_zeroed(width: usize, height: usize, stride: usize) -> Image<MaybeUninit<T>> {
-        Self::new_uninit_or_zeroed(width, height, stride, true)
-    }
     pub fn with_stride_and_fn(
         width: usize,
         height: usize,
@@ -345,7 +293,7 @@ impl<T> Image<T> {
         mut f: impl FnMut(usize, usize) -> T,
     ) -> Self {
         unsafe {
-            let mut image = Self::new_uninit(width, height, stride);
+            let mut image = Image::new_uninit(width, height, stride);
 
             for (y, row) in image.rows_mut().enumerate() {
                 for (x, cell) in row.iter_mut().enumerate() {
@@ -533,6 +481,58 @@ impl<T> Image<T> {
 }
 
 impl<T> Image<MaybeUninit<T>> {
+    fn new_uninit_or_zeroed(
+        width: usize,
+        height: usize,
+        stride: usize,
+        zeroed: bool,
+    ) -> Image<MaybeUninit<T>> {
+        let size = stride * height;
+        let align = std::mem::align_of::<T>();
+        if stride % align != 0 {
+            panic!("Stride {stride} is invalid for alignment {align}");
+        }
+        if stride < width * std::mem::size_of::<T>() {
+            panic!(
+                "Stride {stride} is less than width {width} * {}",
+                std::mem::size_of::<T>()
+            );
+        }
+        unsafe {
+            let ptr = if size == 0 {
+                NonNull::dangling()
+            } else {
+                let layout = Layout::from_size_align_unchecked(size, align);
+                let ptr = if zeroed {
+                    std::alloc::alloc(layout)
+                } else {
+                    std::alloc::alloc_zeroed(layout)
+                } as *mut MaybeUninit<T>;
+
+                if ptr.is_null() {
+                    std::alloc::handle_alloc_error(layout);
+                }
+
+                NonNull::new_unchecked(ptr)
+            };
+
+            Image(Strided::from_raw_parts(
+                ptr.cast(),
+                StridedState {
+                    len: height,
+                    stride: stride as isize,
+                    inner: width,
+                },
+            ))
+        }
+    }
+
+    pub fn new_uninit(width: usize, height: usize, stride: usize) -> Image<MaybeUninit<T>> {
+        Self::new_uninit_or_zeroed(width, height, stride, false)
+    }
+    pub fn new_zeroed(width: usize, height: usize, stride: usize) -> Image<MaybeUninit<T>> {
+        Self::new_uninit_or_zeroed(width, height, stride, true)
+    }
     pub unsafe fn assume_init(self) -> Image<T> {
         unsafe { self.cast() }
     }
@@ -563,7 +563,7 @@ unsafe impl<T: Sync> Sync for Image<T> {}
 
 impl<T: Clone> Clone for Image<T> {
     fn clone(&self) -> Self {
-        let mut image = Self::new_uninit(self.width(), self.height(), self.stride());
+        let mut image = Image::new_uninit(self.width(), self.height(), self.stride());
 
         for (row_dst, row_src) in image.rows_mut().zip(self.view().rows()) {
             for (dst, src) in row_dst.iter_mut().zip(row_src) {

@@ -2,7 +2,7 @@
 
 use std::{hash::Hash, iter::FusedIterator, marker::PhantomData, num::NonZero, ptr::NonNull};
 
-pub const STEP_1: NonZero<isize> = unsafe { NonZero::new_unchecked(1) };
+pub const STEP_1: NonZero<isize> = NonZero::new(1).unwrap();
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Never {}
