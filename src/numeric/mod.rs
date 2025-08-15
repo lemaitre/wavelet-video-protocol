@@ -86,19 +86,19 @@ convert_impl!(i16 => chained(u16) u32);
 convert_impl!(i16 => chained(u16) u64);
 convert_impl!(i32 => chained(u32) u64);
 
-convert_impl!(i16 => chained(u16) u8);
-convert_impl!(i32 => chained(u32) u8);
-convert_impl!(i32 => chained(u32) u16);
-convert_impl!(i64 => chained(u64) u8);
-convert_impl!(i64 => chained(u64) u16);
-convert_impl!(i64 => chained(u64) u32);
+convert_impl!(i16 => chained(i8) u8);
+convert_impl!(i32 => chained(i8) u8);
+convert_impl!(i32 => chained(i16) u16);
+convert_impl!(i64 => chained(i8) u8);
+convert_impl!(i64 => chained(i16) u16);
+convert_impl!(i64 => chained(i16) u32);
 
-convert_impl!(u16 => chained(i16) i8);
-convert_impl!(u32 => chained(i32) i8);
-convert_impl!(u32 => chained(i32) i16);
-convert_impl!(u64 => chained(i64) i8);
-convert_impl!(u64 => chained(i64) i16);
-convert_impl!(u64 => chained(i64) i32);
+convert_impl!(u16 => chained(u8) i8);
+convert_impl!(u32 => chained(u8) i8);
+convert_impl!(u32 => chained(u16) i16);
+convert_impl!(u64 => chained(u8) i8);
+convert_impl!(u64 => chained(u16) i16);
+convert_impl!(u64 => chained(u32) i32);
 
 impl Convert<u8> for i8 {
     fn convert(&self) -> u8 {
@@ -147,7 +147,11 @@ where
     S: Convert<D>,
 {
     fn convert(&self) -> Image<D> {
-        let mut image = Image::new_uninit(self.width(), self.height(), self.stride());
+        let mut image = Image::new_uninit(
+            self.width(),
+            self.height(),
+            self.width() * std::mem::size_of::<D>(),
+        );
 
         for (row_dst, row_src) in image.rows_mut().zip(self.view().rows()) {
             for (dst, src) in row_dst.iter_mut().zip(row_src) {
@@ -167,5 +171,9 @@ mod tests {
     fn foo() {
         assert_eq!(Convert::<i8>::convert(&128u8), 0i8);
         assert_eq!(Convert::<i8>::convert(&130i16), 127i8);
+        assert_eq!(Convert::<u8>::convert(&130i16), 255u8);
+        assert_eq!(Convert::<i8>::convert(&0i16), 0i8);
+        assert_eq!(Convert::<u8>::convert(&0i8), 128u8);
+        assert_eq!(Convert::<u8>::convert(&0i16), 128u8);
     }
 }

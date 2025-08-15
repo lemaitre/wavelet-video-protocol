@@ -5,7 +5,7 @@ use dwt::{
     predict::Predict,
     Dwt2,
 };
-use memory::{Image, ImageView, ImageViewMut};
+use memory::{Image, ImageView};
 use numeric::Convert;
 
 pub mod dwt;
@@ -13,53 +13,17 @@ pub mod io;
 pub mod memory;
 pub mod numeric;
 
-fn print_minmax(image: ImageView<'_, i8>, name: &str) {
-    let mut min = i8::MAX;
-    let mut max = i8::MIN;
-    for row in image.into_rows() {
-        for &cell in row {
-            min = min.min(cell);
-            max = max.max(cell);
-        }
-    }
-
-    println!("{name}: [{min}; {max}]");
-}
-
-fn image_upcast(src: ImageView<'_, u8>, mut dst: ImageViewMut<'_, i8>) {
-    for (src, dst) in src.rows().zip(dst.rows_mut()) {
-        for (&src, dst) in src.iter().zip(dst) {
-            *dst = src.wrapping_sub(128) as i8;
-            // *dst = src;
-        }
-    }
-}
-
-fn image_downcast(src: ImageView<'_, i8>, mut dst: ImageViewMut<'_, u8>) {
-    for (src, dst) in src.rows().zip(dst.rows_mut()) {
-        for (&src, dst) in src.iter().zip(dst) {
-            *dst = (src as u8).wrapping_add(128);
-            // *dst = (src.clamp(0, 255) as i8 as u8).wrapping_add(128);
-            // *dst = src;
-        }
-    }
-}
+type Int = i16;
+const N: usize = 6;
+const LOW_BAND_ONLY: bool = true;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    const N: usize = 4;
-    const LOW_BAND_ONLY: bool = false;
+    let dwt = Daub53;
 
     let input8 = io::load_pgm("input.pgm")?;
-    let mut output8 = input8.clone();
-    let mut reconstructed8 = input8.clone();
-    let mut input = Image::with_stride(input8.width(), input8.height(), input8.stride());
-    image_upcast(input8.view(), input.view_mut());
-    let input = input;
+    let input = Convert::<Image<Int>>::convert(&input8);
     let mut tmp = input.clone();
     let mut output = input.clone();
-    let mut reconstructed = input.clone();
-
-    let dwt = Daub53;
 
     for i in 0..N {
         let i = if LOW_BAND_ONLY { i } else { 0 };
@@ -69,6 +33,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         dwt.dwt2(output.subview_mut(0, 0, w, h), tmp.subview_mut(0, 0, w, h));
     }
 
+    print_minmax(
+        output.subview(0, 0, output.width() / 2, output.height() / 2),
+        "LL",
+    );
     print_minmax(
         output.subview(
             output.width() / 2,
@@ -97,9 +65,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "HH",
     );
 
-    image_downcast(output.view(), output8.view_mut());
+    let output8 = output.convert();
     io::save_pgm(output8.view(), "output.pgm")?;
-    image_upcast(output8.view(), reconstructed.view_mut());
+    let mut reconstructed = output8.convert();
+
+    println!("Written");
 
     for i in (0..N).rev() {
         let i = if LOW_BAND_ONLY { i } else { 0 };
@@ -110,9 +80,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             tmp.subview_mut(0, 0, w, h),
         );
     }
-    image_downcast(reconstructed.view(), reconstructed8.view_mut());
+    let reconstructed8 = reconstructed.convert();
 
-    println!("Written");
+    println!("Reconstructed");
 
     let mut s1 = 0i64;
     let mut s2 = 0i64;
@@ -135,4 +105,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     io::save_pgm(reconstructed8.view(), "reconstructed.pgm")?;
 
     Ok(())
+}
+
+fn print_minmax(image: ImageView<'_, Int>, name: &str) {
+    let mut min = Int::MAX;
+    let mut max = Int::MIN;
+    for row in image.into_rows() {
+        for &cell in row {
+            min = min.min(cell);
+            max = max.max(cell);
+        }
+    }
+
+    println!("{name}: [{min}; {max}]");
 }

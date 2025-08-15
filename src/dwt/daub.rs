@@ -102,7 +102,10 @@ impl Dwt1<i16> for Daub53 {
             .enumerate()
             .rev()
         {
-            let h0 = src2.checked_get(i - 1).copied().unwrap_or_default();
+            let h0 = src2
+                .checked_get(i.wrapping_sub(1))
+                .copied()
+                .unwrap_or_default();
             let a = l - (h0 + h) / 4;
             let b = h + (a + c.unwrap_or(a)) / 2;
             c = Some(a);
